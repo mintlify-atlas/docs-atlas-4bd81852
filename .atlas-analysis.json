@@ -1,0 +1,105 @@
+{
+  "projectType": "general",
+  "projectName": "CSE320 Template",
+  "projectDescription": "Educational template for CSE320 Systems Fundamentals II course projects covering PNG manipulation and GZIP compression in C",
+  "theme": "linden",
+  "primaryColor": "#003B5C",
+  "lightColor": "#4A90A4",
+  "darkColor": "#002A42",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Getting Started",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["introduction", "setup"]
+          },
+          {
+            "group": "Development",
+            "pages": ["building", "testing", "debugging"]
+          }
+        ]
+      },
+      {
+        "tab": "PNG Homework",
+        "groups": [
+          {
+            "group": "Assignment",
+            "pages": ["png/overview", "png/requirements", "png/grading"]
+          },
+          {
+            "group": "Part 1: CLI & Arguments",
+            "pages": ["png/cli-arguments"]
+          },
+          {
+            "group": "Part 2: PNG Parsing",
+            "pages": ["png/png-format", "png/chunk-reading", "png/crc-validation"]
+          },
+          {
+            "group": "Part 3: Advanced Features",
+            "pages": ["png/steganography", "png/image-overlay"]
+          },
+          {
+            "group": "API Reference",
+            "pages": ["png/api/chunks", "png/api/reader", "png/api/crc", "png/api/steg", "png/api/overlay"]
+          }
+        ]
+      },
+      {
+        "tab": "ZLIB Homework",
+        "groups": [
+          {
+            "group": "Assignment",
+            "pages": ["zlib/overview", "zlib/requirements", "zlib/grading"]
+          },
+          {
+            "group": "Part 1: CLI & Arguments",
+            "pages": ["zlib/cli-arguments"]
+          },
+          {
+            "group": "Part 2: LZ77 Compression",
+            "pages": ["zlib/lz77-algorithm", "zlib/lz77-implementation"]
+          },
+          {
+            "group": "Part 3: Huffman Coding",
+            "pages": ["zlib/huffman-algorithm", "zlib/huffman-implementation"]
+          },
+          {
+            "group": "Part 4: DEFLATE/INFLATE",
+            "pages": ["zlib/gzip-format", "zlib/deflate", "zlib/inflate"]
+          },
+          {
+            "group": "API Reference",
+            "pages": ["zlib/api/lz", "zlib/api/huffman", "zlib/api/deflate-inflate", "zlib/api/crc"]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "PNG image file parsing and manipulation",
+    "Steganography: Hide and extract secret messages in PNG images",
+    "Image overlay: Composite multiple PNG images",
+    "LZ77 compression and decompression",
+    "Huffman coding with fixed and dynamic trees",
+    "GZIP (DEFLATE/INFLATE) algorithm implementation",
+    "CRC-32 checksum validation",
+    "Low-level C programming with bitwise operations"
+  ],
+  "publicApiSurface": [
+    "png_open() - Open and validate PNG file",
+    "png_read_chunk() - Read PNG chunk with CRC validation",
+    "png_parse_ihdr() - Parse IHDR header chunk",
+    "png_parse_plte() - Parse palette chunk",
+    "png_crc() - Compute CRC-32 checksum",
+    "png_embed_lsb() - Encode steganographic message",
+    "png_extract_lsb() - Extract hidden message",
+    "png_overlay_paste() - Overlay images",
+    "lz_compress_tokens() - LZ77 compression",
+    "huffman_encode_tokens() - Huffman encoding",
+    "huffman_decode() - Huffman decoding with LZ77",
+    "deflate() - GZIP compression",
+    "inflate() - GZIP decompression"
+  ]
+}
