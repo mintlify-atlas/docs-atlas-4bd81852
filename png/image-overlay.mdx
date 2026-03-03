@@ -42,7 +42,7 @@ Result: 640x480 image with overlay at position (50, 50)
 
 ```c
 int png_overlay_paste(const char *large_path, const char *small_path,
-                      const char *output_path, int x_offset, int y_offset);
+                      const char *output_path, uint32_t x_offset, uint32_t y_offset);
 ```
 
 <ParamField path="large_path" type="const char*" required>
@@ -57,11 +57,11 @@ int png_overlay_paste(const char *large_path, const char *small_path,
   Path for the output composite PNG
 </ParamField>
 
-<ParamField path="x_offset" type="int" required>
+<ParamField path="x_offset" type="uint32_t" required>
   X coordinate (column) where overlay will be placed (0 = left edge)
 </ParamField>
 
-<ParamField path="y_offset" type="int" required>
+<ParamField path="y_offset" type="uint32_t" required>
   Y coordinate (row) where overlay will be placed (0 = top edge)
 </ParamField>
 

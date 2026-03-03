@@ -119,25 +119,25 @@ for (int i = 0; i < original_count && total < 256; i++) {
 
 ## API functions
 
-### png_embed_lsb()
+### png_encode_lsb()
 
 Encode a secret message into a PNG:
 
 ```c
-int png_embed_lsb(const char *input_path, const char *message, 
-                  const char *output_path);
+int png_encode_lsb(const char *input_path, const char *output_path,
+                   const char *secret);
 ```
 
 <ParamField path="input_path" type="const char*" required>
   Path to source PNG file
 </ParamField>
 
-<ParamField path="message" type="const char*" required>
-  Message to hide (null-terminated string)
-</ParamField>
-
 <ParamField path="output_path" type="const char*" required>
   Path for output PNG with hidden message
+</ParamField>
+
+<ParamField path="secret" type="const char*" required>
+  Message to hide (null-terminated string)
 </ParamField>
 
 **Returns:** 0 on success, -1 on error
@@ -419,14 +419,14 @@ char huge_message[12799]; // 12,799 + null = 12,800
 memset(huge_message, 'A', 12798);
 huge_message[12798] = '\0';
 
-int result = png_embed_lsb("image.png", huge_message, "out.png");
+int result = png_encode_lsb("image.png", "out.png", huge_message);
 assert(result == 0); // Should succeed
 
 char too_big[12800];
 memset(too_big, 'A', 12799);
 too_big[12799] = '\0';
 
-result = png_embed_lsb("image.png", too_big, "out.png");
+result = png_encode_lsb("image.png", "out.png", too_big);
 assert(result == -1); // Should fail (too long)
 ```
 

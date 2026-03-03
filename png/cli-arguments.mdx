@@ -306,7 +306,7 @@ if (strcmp(argv[i], "-e") == 0) {
     }
     
     // Call steganography function
-    if (png_embed_lsb(input_file, message, output) < 0) {
+    if (png_encode_lsb(input_file, output, message) < 0) {
         PRINT_ERROR_ENCODE_FAILED();
         return EXIT_FAILURE;
     }

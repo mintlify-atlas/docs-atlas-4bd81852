@@ -93,7 +93,7 @@
     "png_parse_ihdr() - Parse IHDR header chunk",
     "png_parse_plte() - Parse palette chunk",
     "png_crc() - Compute CRC-32 checksum",
-    "png_embed_lsb() - Encode steganographic message",
+    "png_encode_lsb() - Encode steganographic message",
     "png_extract_lsb() - Extract hidden message",
     "png_overlay_paste() - Overlay images",
     "lz_compress_tokens() - LZ77 compression",
