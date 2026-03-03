@@ -1,0 +1,159 @@
+---
+title: "ZLIB Homework Overview"
+description: "Introduction to the GZIP compression/decompression homework assignment"
+---
+
+## Introduction
+
+In this assignment, you will debug and optimize a program to interact with gzip-compressed files. This builds on the previous PNG homework, as PNG images use the gzip compression format.
+
+### What is GZIP?
+
+GZIP is a file format used for lossless data compression. The compression is achieved through two main algorithms:
+
+1. **LZ77** - Replaces repeated sequences with references to their last occurrence
+2. **Huffman Coding** - Encodes frequently occurring bytes with fewer bits
+
+The compressed file data is surrounded with metadata about the file and the compression method. The unit of data and its metadata is called a **member**.
+
+### Learning Objectives
+
+This homework is designed to familiarize you with:
+
+- Debugging and profiling C programs
+- Algorithms and data structures in C
+- Buffered I/O operations
+- Memory allocation and management
+- Bit-level data manipulation
+- Understanding compression algorithms
+
+<Warning>
+This is a challenging project. You cannot simply read through the materials and start coding. You will need to:
+- Experiment with the provided data files
+- Develop and validate your understanding of data formats
+- Allocate time regularly over several weeks
+- Test thoroughly with your own test cases
+</Warning>
+
+## Specifications
+
+The official specifications for the GZIP format are available at:
+
+- [RFC 1951](http://tools.ietf.org/html/rfc1951) - DEFLATE block format and algorithms
+- [RFC 1952](http://tools.ietf.org/html/rfc1952) - GZIP file format
+- [zlib.net/feldspar.html](https://zlib.net/feldspar.html) - Simplified algorithm descriptions
+
+## Assignment Structure
+
+The assignment is divided into several parts:
+
+<Steps>
+  <Step title="Part 1: Argument Validation">
+    Implement command-line argument processing for compress, decompress, and info operations
+  </Step>
+  
+  <Step title="Part 2: LZ77 Compression">
+    Implement the Lempel-Ziv compression algorithm to find and encode repeated sequences
+  </Step>
+  
+  <Step title="Part 3: Huffman Coding">
+    Implement Huffman encoding and decoding for optimal bit-level compression
+  </Step>
+  
+  <Step title="Part 4: GZIP Integration">
+    Combine LZ77 and Huffman coding to implement the full DEFLATE/INFLATE algorithms
+  </Step>
+</Steps>
+
+## Code Organization
+
+The base code is organized as follows:
+
+```
+ZLIB_HW/
+├── Makefile           # Build configuration
+├── README.md          # Assignment specification
+├── include/           # Header files (.h)
+│   ├── crc.h         # CRC computation
+│   ├── debug.h       # Debug macros
+│   ├── global.h      # Global definitions and macros
+│   ├── huff.h        # Huffman coding interface
+│   ├── lz.h          # LZ77 interface
+│   ├── our_zlib.h    # Main GZIP interface
+│   ├── queue.h       # Priority queue for Huffman trees
+│   └── utility.h     # Utility functions
+└── src/              # Implementation files (.c)
+    ├── crc.c
+    ├── huff.c
+    ├── lz.c
+    ├── main.c
+    ├── queue.c
+    ├── utility.c
+    └── zlib.c
+```
+
+<Note>
+The `main.c` file **MUST ONLY** contain `#include`s, local `#define`s, and the `main` function. All other functions must be in separate `.c` files. This restriction is required for Criterion testing.
+</Note>
+
+## Allowed Libraries
+
+You may use:
+- `glibc` (GNU standard C library)
+- Dynamic memory allocation (`malloc`, `calloc`, `free`)
+- Standard I/O functions (`fread`, `fwrite`, etc.)
+
+<Warning>
+You **MUST NOT** use:
+- `zlib` library or any compression/decompression library
+- Any binary libraries other than `glibc`
+
+Using disallowed libraries will result in a zero grade and potential academic dishonesty charges.
+</Warning>
+
+## Output Requirements
+
+<Warning>
+Program output must **EXACTLY** match the specifications. Even minor deviations in output format will significantly impact your grade.
+</Warning>
+
+- For normal operation, follow the exact format specified for each mode
+- Use the `debug` macro for debugging output (only shown when compiled with `make debug`)
+- In production mode, no extraneous output is allowed
+- Successful execution: exit with `EXIT_SUCCESS` (0)
+- Error conditions: print one-line error to stderr and exit with `EXIT_FAILURE` (1)
+
+## Building the Project
+
+Use the provided Makefile:
+
+```bash
+make          # Compile the project
+make debug    # Compile with debugging symbols
+make clean    # Remove compiled files
+make clean debug  # Clean rebuild for debugging
+```
+
+## Testing
+
+<Note>
+The tests in the template repository are for basic functionality checks only. They are **NOT** the same tests used for grading. You should write your own comprehensive tests to ensure your code handles all required functionality.
+</Note>
+
+Codegrade will rerun basic tests on every push, but the final grading uses different test cases.
+
+## Getting Help
+
+Reference materials:
+- [Beej's Guide to C - Pointers](https://beej.us/guide/bgc/html/#pointers)
+- [Beej's Guide to C - Command Line Arguments](https://beej.us/guide/bgc/html/#command-line-arguments)
+
+## Next Steps
+
+Continue to the following sections to learn about:
+- Assignment requirements and deliverables
+- Grading criteria
+- Command-line argument processing
+- LZ77 algorithm implementation
+- Huffman coding implementation
+- GZIP file format and DEFLATE/INFLATE algorithms

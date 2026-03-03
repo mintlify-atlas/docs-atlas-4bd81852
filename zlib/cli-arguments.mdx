@@ -1,0 +1,370 @@
+---
+title: "Command-Line Argument Processing"
+description: "Processing command-line arguments and program operation modes"
+---
+
+## Program Usage
+
+The ZLIB program is a command-line utility that opens a file and processes operations specified by command-line arguments.
+
+### Usage Syntax
+
+```bash
+bin/png -i gz_file [options]
+```
+
+### Options
+
+| Option | Description | Required |
+|--------|-------------|----------|
+| `-i gz_file` | Input GZ file | Yes (except with `-h`) |
+| `-h` | Print help message | No |
+| `-m` | Print member summary | No (mutually exclusive) |
+| `-c` | Compress the file | No (mutually exclusive) |
+| `-d` | Decompress the file | No (mutually exclusive) |
+| `-o out_file` | Output file for `-c` or `-d` | Required for `-c` and `-d` |
+
+<Note>
+Square brackets indicate optional arguments. The `-i` flag is **required** for all operations except `-h`.
+</Note>
+
+## Operation Modes
+
+The program supports three mutually exclusive operation modes:
+
+### Help Mode (`-h`)
+
+Displays usage information and exits successfully.
+
+```bash
+bin/png -h
+```
+
+**Behavior:**
+- Prints usage message to stdout
+- Exits with `EXIT_SUCCESS` (0)
+- Ignores all other arguments
+
+**Implementation:**
+Use the `PRINT_USAGE` macro from `global.h`:
+
+```c
+PRINT_USAGE(argv[0]);
+return 0;
+```
+
+### Member Summary Mode (`-m`)
+
+Displays metadata for all members in a GZIP file.
+
+```bash
+bin/png -i file.gz -m
+```
+
+**Output Format:**
+```
+Member Summary for <file>:
+  Member <label>: Compression Method: <cm>, Last Modified: <mtime>, OS: <os>, Extra: <extra_len>, [Comment: <comment>, ]Size: <size>, CRC: <valid|invalid>
+```
+
+**Fields:**
+- `<label>` - Member name (from header) or index number (0, 1, 2...)
+- `<cm>` - Compression method (0 = no compression, 8 = DEFLATE)
+- `<mtime>` - Last modification time (Unix timestamp)
+- `<os>` - Operating system identifier
+- `<extra_len>` - Length of extra field
+- `<comment>` - Optional comment (only shown if present)
+- `<size>` - Uncompressed size in bytes
+- `<valid|invalid>` - CRC validation result
+
+**Implementation:**
+Use the provided macros from `global.h`:
+
+```c
+PRINT_MEMBER_SUMMARY_HEADER(filename);
+PRINT_MEMBER_LINE(label, cm, mtime, os, extra_len, comment, size, crc_valid);
+```
+
+See `main.c:82-100` for the implementation example.
+
+### Decompress Mode (`-d`)
+
+Decompresses a GZIP file and writes the raw uncompressed bytes to an output file.
+
+```bash
+bin/png -i compressed.gz -d -o output.txt
+```
+
+**Requirements:**
+- The `-o` flag is **required** and must specify the output file
+- Validates CRC and HCRC checksums
+- Prints errors to stderr if validation fails
+- Exits with `EXIT_FAILURE` on errors
+
+**Error Conditions:**
+- Invalid CRC or HCRC
+- Parsing failures
+- File I/O errors
+- Invalid block types
+
+### Compress Mode (`-c`)
+
+Compresses a file using the DEFLATE algorithm and writes a GZIP file.
+
+```bash
+bin/png -i input.txt -c -o compressed.gz
+```
+
+**Requirements:**
+- The `-o` flag is **required** and must specify the output file
+- Produces valid GZIP format
+- Computes CRC checksum
+- Writes proper GZIP header and footer
+
+## Two-Pass Argument Processing
+
+The program uses a two-pass approach to process command-line arguments. See `main.c:8-64` for the implementation.
+
+### First Pass: Validation
+
+<Steps>
+  <Step title="Check for help flag">
+    If `-h` is specified, print usage and exit with `EXIT_SUCCESS`, ignoring all other arguments
+  </Step>
+  
+  <Step title="Locate input file">
+    Find the `-i` flag and extract the associated filename
+  </Step>
+  
+  <Step title="Parse mode flags">
+    Identify which operation mode is requested (`-m`, `-c`, or `-d`)
+  </Step>
+  
+  <Step title="Check for output file">
+    If mode is `-c` or `-d`, verify `-o` flag is present
+  </Step>
+</Steps>
+
+### Second Pass: Execution
+
+After successful validation:
+1. Open the input file
+2. Execute the requested operation
+3. Write results to output file or stdout
+4. Exit with appropriate status
+
+## Argument Validation Rules
+
+### Required Arguments
+
+<Warning>
+The `-i` flag is **required** for all operations except `-h`.
+</Warning>
+
+If `-i` is missing or has no filename:
+```c
+PRINT_ERROR_MISSING_I_FLAG();
+return EXIT_FAILURE;
+```
+
+### Mutually Exclusive Operations
+
+<Warning>
+Exactly one of `-m`, `-c`, or `-d` must be specified.
+</Warning>
+
+If none specified or multiple specified:
+```c
+PRINT_ERROR_REQUIRE_ONE_OF_MCD();
+return EXIT_FAILURE;
+```
+
+### Output File Requirement
+
+<Warning>
+The `-o` flag is **required** when using `-c` or `-d`.
+</Warning>
+
+If `-o` is missing for compress or decompress:
+```c
+PRINT_ERROR_MISSING_O_FLAG();
+return EXIT_FAILURE;
+```
+
+## Error Messages
+
+All error messages use macros from `global.h` and are printed to stderr:
+
+| Macro | When to Use |
+|-------|-------------|
+| `PRINT_ERROR_MISSING_I_FLAG()` | `-i` flag not provided |
+| `PRINT_ERROR_REQUIRE_ONE_OF_MCD()` | No mode or multiple modes specified |
+| `PRINT_ERROR_MISSING_O_FLAG()` | `-o` missing for `-c` or `-d` |
+| `PRINT_ERROR_OPEN_FILE(filename)` | Cannot open specified file |
+| `PRINT_ERROR_BAD_HEADER()` | Invalid GZIP magic number |
+
+## Exit Codes
+
+- `EXIT_SUCCESS` (0) - Successful execution
+- `EXIT_FAILURE` (1) - Any error condition
+
+<Note>
+All error messages must go to stderr, not stdout. The program must exit immediately after printing an error.
+</Note>
+
+## Implementation Example
+
+Here's the argument parsing logic from `main.c:8-64`:
+
+```c
+int main(int argc, char** argv) {
+    char* filename = NULL;
+    char* output_filename = NULL;
+    int mode = -1;
+
+    // First pass: parse arguments
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0) {
+            PRINT_USAGE(argv[0]);
+            return 0;
+        }
+        if (strcmp(argv[i], "-i") == 0) {
+            if (i < argc - 1) {
+                filename = argv[i + 1];
+                i++;
+            }
+        }
+        else if (strcmp(argv[i], "-o") == 0) {
+            if (i < argc - 1) {
+                output_filename = argv[i + 1];
+                i++;
+            }
+        }
+        else if (strcmp(argv[i], "-m") == 0) {
+            if (mode >= 0) {
+                PRINT_ERROR_REQUIRE_ONE_OF_MCD();
+                return 1;
+            }
+            mode = M_INFO;
+        }
+        else if (strcmp(argv[i], "-c") == 0) {
+            if (mode >= 0) {
+                PRINT_ERROR_REQUIRE_ONE_OF_MCD();
+                return 1;
+            }
+            mode = M_DEFLATE;
+        }
+        else if (strcmp(argv[i], "-d") == 0) {
+            if (mode >= 0) {
+                PRINT_ERROR_REQUIRE_ONE_OF_MCD();
+                return 1;
+            }
+            mode = M_INFLATE;
+        }
+    }
+
+    // Validate required arguments
+    if (filename == NULL) {
+        PRINT_ERROR_MISSING_I_FLAG();
+        return 1;
+    }
+    if (mode < 0) {
+        PRINT_ERROR_REQUIRE_ONE_OF_MCD();
+        return 1;
+    }
+    if ((mode == M_DEFLATE || mode == M_INFLATE) && output_filename == NULL) {
+        PRINT_ERROR_MISSING_O_FLAG();
+        return 1;
+    }
+    
+    // Proceed with operation...
+}
+```
+
+## Program Modes
+
+The program defines three mode constants in `our_zlib.h:5-7`:
+
+```c
+#define M_DEFLATE   0  // Compression mode
+#define M_INFLATE   1  // Decompression mode
+#define M_INFO      2  // Member summary mode
+```
+
+## File Operations
+
+### Opening Files
+
+Files are opened in binary mode:
+
+```c
+FILE* file = fopen(filename, "rb");
+if (file == NULL) {
+    PRINT_ERROR_OPEN_FILE(filename);
+    return 1;
+}
+```
+
+### Writing Output
+
+Output files are opened in binary write mode:
+
+```c
+FILE* out = fopen(output_filename, "wb");
+if (!out) {
+    PRINT_ERROR_OPEN_FILE(output_filename);
+    free(out_buf);
+    return 1;
+}
+fwrite(out_buf, 1, out_len, out);
+fclose(out);
+```
+
+<Warning>
+Always close files and free allocated memory, even in error paths.
+</Warning>
+
+## Testing Examples
+
+### Valid Usage
+
+```bash
+# Display help
+bin/png -h
+
+# Show member summary
+bin/png -i test.gz -m
+
+# Decompress a file
+bin/png -i compressed.gz -d -o output.txt
+
+# Compress a file
+bin/png -i input.txt -c -o output.gz
+```
+
+### Invalid Usage
+
+```bash
+# Missing -i flag
+bin/png -m
+# Error: -i with input file is required
+
+# Missing -o for compression
+bin/png -i input.txt -c
+# Error: -o with output file is required for -c and -d
+
+# Multiple modes
+bin/png -i test.gz -m -d -o out.txt
+# Error: exactly one of -m, -c, or -d is required
+
+# No mode specified
+bin/png -i test.gz
+# Error: exactly one of -m, -c, or -d is required
+```
+
+## References
+
+- `main.c:8-197` - Complete argument processing implementation
+- `global.h:8-25` - All output and error macros
+- `our_zlib.h:5-7` - Program mode definitions
+- [Beej's Guide - Command Line Arguments](https://beej.us/guide/bgc/html/#command-line-arguments)

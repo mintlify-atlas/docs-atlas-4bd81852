@@ -1,0 +1,142 @@
+---
+title: 'png_chunks.h'
+description: 'PNG chunk parsing functions for IHDR and PLTE chunks'
+---
+
+## Overview
+
+The `png_chunks.h` module provides functions for parsing PNG chunk data into structured formats. It handles the IHDR (Image Header) and PLTE (Palette) chunks, which contain critical metadata and color information for PNG images.
+
+## Data Structures
+
+### png_ihdr_t
+
+```c
+typedef struct {
+    uint32_t width;      // Image width in pixels (big-endian)
+    uint32_t height;     // Image height in pixels (big-endian)
+    uint8_t  bit_depth;  // Bits per sample (1, 2, 4, 8, or 16)
+    uint8_t  color_type; // Color representation (0, 2, 3, 4, or 6)
+    uint8_t  compression;// Compression method (must be 0)
+    uint8_t  filter;     // Filter method (must be 0)
+    uint8_t  interlace;  // Interlace method (0 = none, 1 = Adam7)
+} png_ihdr_t;
+```
+
+### png_color_t
+
+```c
+typedef struct {
+    uint8_t r;  // Red component (0-255)
+    uint8_t g;  // Green component (0-255)
+    uint8_t b;  // Blue component (0-255)
+} png_color_t;
+```
+
+### png_chunk_t
+
+```c
+typedef struct {
+    uint32_t length;  // Chunk data length in bytes (big-endian)
+    char     type[5];  // Chunk type (4 bytes, null-terminated)
+    uint8_t *data;     // Pointer to chunk data (dynamically allocated)
+    uint32_t crc;      // CRC-32 checksum (big-endian)
+} png_chunk_t;
+```
+
+## Functions
+
+### png_parse_ihdr
+
+```c
+int png_parse_ihdr(const png_chunk_t *chunk, png_ihdr_t *out);
+```
+
+Parses IHDR chunk data into a structured format. The chunk must be an IHDR chunk with length exactly 13 bytes. The function extracts the width, height, bit depth, color type, compression method, filter method, and interlace method from the chunk data.
+
+<ParamField path="chunk" type="const png_chunk_t *" required>
+  Pointer to a PNG chunk that must be an IHDR chunk with length 13
+</ParamField>
+
+<ParamField path="out" type="png_ihdr_t *" required>
+  Pointer to output structure where parsed data will be written
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns `0` on success, `-1` on error (NULL pointers, invalid chunk length, or invalid chunk data)
+</ResponseField>
+
+#### Example
+
+```c
+png_chunk_t chunk;
+png_ihdr_t ihdr;
+
+// After reading a chunk from a PNG file
+if (png_parse_ihdr(&chunk, &ihdr) == 0) {
+    printf("Image dimensions: %u x %u\\n", ihdr.width, ihdr.height);
+    printf("Bit depth: %u\\n", ihdr.bit_depth);
+    printf("Color type: %u\\n", ihdr.color_type);
+}
+```
+
+#### Notes
+
+- All multi-byte integers in the IHDR data are stored in big-endian format
+- The function converts big-endian values to host byte order
+- The chunk type must be "IHDR" and length must be exactly 13 bytes
+
+---
+
+### png_parse_plte
+
+```c
+int png_parse_plte(const png_chunk_t *chunk, png_color_t **out_colors, size_t *out_count);
+```
+
+Parses PLTE chunk data into an array of color structures. The chunk must be a PLTE chunk with length that is a multiple of 3 (each color is 3 bytes: R, G, B). The function allocates memory for the color array, which the caller must free.
+
+<ParamField path="chunk" type="const png_chunk_t *" required>
+  Pointer to a PNG chunk that must be a PLTE chunk
+</ParamField>
+
+<ParamField path="out_colors" type="png_color_t **" required>
+  Pointer to output pointer where allocated color array will be written
+</ParamField>
+
+<ParamField path="out_count" type="size_t *" required>
+  Pointer to output variable where color count will be written
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns `0` on success, `-1` on error (NULL pointers, invalid length, palette too large, or allocation failure)
+</ResponseField>
+
+#### Example
+
+```c
+png_chunk_t chunk;
+png_color_t *colors = NULL;
+size_t count = 0;
+
+// After reading a PLTE chunk
+if (png_parse_plte(&chunk, &colors, &count) == 0) {
+    printf("Palette contains %zu colors\\n", count);
+    for (size_t i = 0; i < count; i++) {
+        printf("Color %zu: RGB(%u, %u, %u)\\n", 
+               i, colors[i].r, colors[i].g, colors[i].b);
+    }
+    free(colors);  // Caller must free the allocated array
+}
+```
+
+#### Memory Management
+
+The caller is responsible for freeing the allocated color array using `free()`.
+
+#### Notes
+
+- The chunk type must be "PLTE"
+- The chunk length must be a multiple of 3
+- PNG palettes can contain up to 256 color entries (768 bytes)
+- Each color entry consists of 3 bytes: Red, Green, Blue (in that order)

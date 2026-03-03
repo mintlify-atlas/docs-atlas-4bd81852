@@ -1,0 +1,327 @@
+---
+title: "Huffman Coding API"
+description: "Huffman encoding and decoding functions for GZIP compression"
+---
+
+## Overview
+
+The Huffman coding module provides functions to encode and decode data using Huffman trees. Huffman coding is a variable-length prefix coding algorithm that assigns shorter codes to more frequently occurring symbols, achieving lossless compression.
+
+In the GZIP format, Huffman coding is applied to LZ77 tokens and operates at a higher level than LZ77 compression.
+
+## Data Structures
+
+### huff_node_t
+
+Represents a node in a Huffman tree.
+
+```c
+typedef struct huff_node {
+    struct huff_node* left;
+    struct huff_node* right;
+    int symbol;
+    unsigned long freq;
+} huff_node_t;
+```
+
+<ResponseField name="left" type="struct huff_node*">
+  Pointer to the left child node. `NULL` for leaf nodes. Left branches represent a 0 bit
+</ResponseField>
+
+<ResponseField name="right" type="struct huff_node*">
+  Pointer to the right child node. `NULL` for leaf nodes. Right branches represent a 1 bit
+</ResponseField>
+
+<ResponseField name="symbol" type="int">
+  The symbol (byte value) stored at this node. Set to -1 for internal (non-leaf) nodes
+</ResponseField>
+
+<ResponseField name="freq" type="unsigned long">
+  Frequency of occurrence for this symbol or sum of child frequencies for internal nodes
+</ResponseField>
+
+## Functions
+
+### huffman_encode_tokens
+
+Encodes an array of LZ77 tokens using Huffman coding.
+
+```c
+unsigned char* huffman_encode_tokens(const lz_token_t* tokens, size_t num_tokens,
+                                     unsigned long* bits_written, size_t* out_len,
+                                     unsigned char* returned_btype);
+```
+
+<ParamField path="tokens" type="const lz_token_t*" required>
+  Pointer to array of LZ77 tokens to encode
+</ParamField>
+
+<ParamField path="num_tokens" type="size_t" required>
+  Number of tokens in the input array
+</ParamField>
+
+<ParamField path="bits_written" type="unsigned long*" required>
+  Output parameter that receives the total number of bits written to the output
+</ParamField>
+
+<ParamField path="out_len" type="size_t*" required>
+  Output parameter that receives the length of the output buffer in bytes
+</ParamField>
+
+<ParamField path="returned_btype" type="unsigned char*" required>
+  Output parameter that receives the block type used for encoding (01 for fixed, 10 for dynamic)
+</ParamField>
+
+<ResponseField name="return" type="unsigned char*">
+  Pointer to a dynamically allocated buffer containing the Huffman-encoded data, or `NULL` on error
+</ResponseField>
+
+#### Behavior
+
+- Analyzes token frequencies to determine optimal encoding strategy (fixed vs dynamic)
+- Builds Huffman trees for literal/length codes and distance codes
+- Encodes the tree structure in the output (for dynamic blocks)
+- Encodes each token using the generated Huffman codes
+- Appends end-of-block symbol (256)
+
+#### Error Conditions
+
+- Returns `NULL` if `tokens` is `NULL`
+- Returns `NULL` if tokens contain invalid data (e.g., both literal and distance-length set)
+- Returns `NULL` if `bits_written`, `out_len`, or `returned_btype` is `NULL`
+
+#### Memory Management
+
+The returned buffer is dynamically allocated. The caller must free it using `free()`.
+
+#### Example
+
+```c
+lz_token_t tokens[100];
+size_t num_tokens = 100;
+unsigned long bits_written = 0;
+size_t out_len = 0;
+unsigned char btype = 0;
+
+unsigned char* encoded = huffman_encode_tokens(tokens, num_tokens,
+                                                &bits_written, &out_len,
+                                                &btype);
+if (encoded == NULL) {
+    fprintf(stderr, "Encoding failed\n");
+    return -1;
+}
+
+printf("Encoded %lu bits (%zu bytes) using block type %d\n",
+       bits_written, out_len, btype);
+
+free(encoded);
+```
+
+### huffman_decode
+
+Decodes Huffman-encoded data and performs LZ77 decompression.
+
+```c
+unsigned char* huffman_decode(const unsigned char* data, size_t enc_len,
+                              unsigned int btype_val, unsigned long* bits_read,
+                              size_t* out_len, const unsigned char* history,
+                              size_t history_len);
+```
+
+<ParamField path="data" type="const unsigned char*" required>
+  Pointer to the Huffman-encoded data buffer
+</ParamField>
+
+<ParamField path="enc_len" type="size_t" required>
+  Length of the encoded data in bytes
+</ParamField>
+
+<ParamField path="btype_val" type="unsigned int" required>
+  Block type: 0 (no compression), 1 (fixed Huffman), 2 (dynamic Huffman). Value 3 is reserved and invalid
+</ParamField>
+
+<ParamField path="bits_read" type="unsigned long*" required>
+  Output parameter that receives the total number of bits read from the input. Must not be `NULL`
+</ParamField>
+
+<ParamField path="out_len" type="size_t*" required>
+  Output parameter that receives the length of the decoded output in bytes
+</ParamField>
+
+<ParamField path="history" type="const unsigned char*">
+  Pointer to previously decompressed data for cross-block distance references. Pass `NULL` for single-block or standalone decode
+</ParamField>
+
+<ParamField path="history_len" type="size_t">
+  Length of the history buffer in bytes. Pass 0 if `history` is `NULL`
+</ParamField>
+
+<ResponseField name="return" type="unsigned char*">
+  Pointer to a dynamically allocated buffer containing the decoded data, or `NULL` on error
+</ResponseField>
+
+#### Behavior
+
+##### No Compression (btype_val = 0)
+
+- Skips remaining bits in current byte
+- Reads 2-byte length field (little-endian)
+- Reads 2-byte one's complement of length
+- Verifies length complement matches
+- Copies raw data directly to output
+
+##### Fixed Huffman (btype_val = 1)
+
+- Uses predefined Huffman codes specified in RFC 1951:
+  - Literals 0-143: 8 bits (00110000 - 10111111)
+  - Literals 144-255: 9 bits (110010000 - 111111111)
+  - End-of-block 256-279: 7 bits (0000000 - 0010111)
+  - Length codes 280-287: 8 bits (11000000 - 11000111)
+- Decodes symbols until end-of-block (256) is encountered
+- Performs LZ77 decompression for length-distance pairs
+
+##### Dynamic Huffman (btype_val = 2)
+
+1. Reads HLIT (5 bits): number of literal/length codes minus 257
+2. Reads HDIST (5 bits): number of distance codes minus 1
+3. Reads HCLEN (4 bits): number of code length codes minus 4
+4. Reads (HCLEN + 4) code lengths (3 bits each) in special order:
+   - Order: 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
+5. Builds code length Huffman tree
+6. Decodes (HLIT + 257) literal/length code lengths using special symbols:
+   - 0-15: Explicit code length
+   - 16: Copy previous code length 3-6 times (2 extra bits)
+   - 17: Repeat code length 0 for 3-10 times (3 extra bits)
+   - 18: Repeat code length 0 for 11-138 times (7 extra bits)
+7. Decodes (HDIST + 1) distance code lengths using the same tree
+8. Builds literal/length and distance Huffman trees
+9. Decodes data symbols until end-of-block (256)
+
+#### LZ77 Decompression
+
+When a length code (257-285) is decoded:
+
+1. Read extra bits (if any) and calculate actual length
+2. Decode next symbol from distance tree
+3. Read distance extra bits (if any) and calculate actual distance
+4. Copy `length` bytes from `distance` bytes back in the output buffer
+5. Handle sliding window overflow by repeating patterns
+
+#### Error Conditions
+
+- Returns `NULL` if `data` is `NULL`
+- Returns `NULL` if `bits_read` is `NULL`
+- Returns `NULL` if `btype_val` is 3 (reserved)
+- Returns `NULL` if invalid distance codes (30 or 31) are encountered
+- Returns `NULL` if Huffman tree construction fails
+- Returns `NULL` if length complement verification fails (no compression mode)
+
+#### Memory Management
+
+The returned buffer is dynamically allocated. The caller must free it using `free()`.
+
+#### Example
+
+```c
+unsigned char compressed_data[1024];
+size_t compressed_len = 1024;
+unsigned long bits_read = 0;
+size_t decoded_len = 0;
+
+unsigned char* decoded = huffman_decode(compressed_data, compressed_len,
+                                        2, // dynamic Huffman
+                                        &bits_read, &decoded_len,
+                                        NULL, 0); // no history
+
+if (decoded == NULL) {
+    fprintf(stderr, "Decoding failed\n");
+    return -1;
+}
+
+printf("Decoded %zu bytes (read %lu bits)\n", decoded_len, bits_read);
+
+free(decoded);
+```
+
+## Huffman Tree Construction
+
+### Building from Frequencies
+
+1. Create leaf nodes for each symbol with non-zero frequency
+2. While more than one node remains:
+   - Select two nodes with lowest frequencies
+   - Create parent node with sum of frequencies
+   - Connect nodes as left and right children
+3. The remaining node becomes the root
+
+### Canonical Ordering
+
+Symbols with the same code length must be in lexicographical order. For symbols A and B at the same tree level, A must be the left child if A < B alphabetically.
+
+### Code Length Encoding
+
+The Huffman tree can be reconstructed from an ordered list of code lengths:
+
+1. Tabulate frequency of each code length
+2. Calculate first code for each code length
+3. Assign codes by incrementing within each length level
+
+## Bit-Level Operations
+
+### Bit Packing Order
+
+- Data elements are packed into bytes starting with the **least-significant bit**
+- Huffman codes are packed starting with the **most-significant bit**
+- Multi-byte integers use little-endian format
+
+### Reading Bits
+
+```c
+// Example bit layout in byte
+// +--------+
+// |76543210|
+// +--------+
+// Bits are numbered from LSB (0) to MSB (7)
+```
+
+## Block Types (BTYPE)
+
+- **00**: No compression - raw data with length header
+- **01**: Fixed Huffman codes - predefined code table
+- **10**: Dynamic Huffman codes - custom tree in block header
+- **11**: Reserved (error)
+
+## Length and Distance Codes
+
+### Length Codes (257-285)
+
+Map to actual lengths 3-258 with extra bits:
+
+- 257: length 3
+- 258: length 4
+- 259-264: lengths 5-10 (0 extra bits)
+- 265-268: lengths 11-18 (1 extra bit)
+- 269-284: lengths 19-257 (2-5 extra bits)
+- 285: length 258 (0 extra bits)
+
+### Distance Codes (0-29)
+
+Map to actual distances 1-32768 with extra bits:
+
+- 0-3: distances 1-4 (0 extra bits)
+- 4-5: distances 5-8 (1 extra bit)
+- 6-29: distances 9-32768 (2-13 extra bits)
+- 30-31: Reserved (invalid)
+
+## Helper Functions
+
+The following static helper functions are used internally:
+
+- `build_codes()` - Build Huffman codes from tree structure
+- `free_tree()` - Recursively free Huffman tree nodes
+- `canonical_codes()` - Generate canonical Huffman codes from lengths
+- `length_to_code()` - Convert length value to length code and extra bits
+- `distance_to_code()` - Convert distance value to distance code and extra bits
+- `build_huffman_tree_from_freq()` - Construct tree from frequency table
+- `build_decoder()` - Build decoding table for fast symbol lookup
+- `decode_symbol()` - Decode single symbol from bitstream

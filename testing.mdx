@@ -1,0 +1,540 @@
+---
+title: Testing Your Code
+description: How to run Criterion tests and write your own test cases for the CSE320 assignments
+---
+
+# Testing Your Code
+
+Both homework assignments use the [Criterion](https://github.com/Snaipe/Criterion) testing framework for unit testing. This guide covers how to run tests, interpret results, and write your own test cases.
+
+## Quick Start
+
+<CodeGroup>
+```bash Run All Tests
+# First, compile the tests
+make clean all
+
+# Run the test suite
+bin/png_tests
+# or
+bin/zlib_tests
+```
+
+```bash Verbose Output
+# Show detailed test information
+bin/png_tests --verbose=0
+```
+
+```bash Run Specific Test Suite
+# Run only tests from a specific file
+bin/png_tests --filter=test_reader
+```
+</CodeGroup>
+
+## Understanding Criterion Tests
+
+### What is Unit Testing?
+
+Unit testing is a development practice where small, testable sections of code (units) are tested individually. This helps you:
+
+- Verify individual functions work correctly
+- Catch bugs early in development
+- Ensure changes don't break existing functionality
+- Document expected behavior through test examples
+
+<Note>
+  Some developers use **Test-Driven Development (TDD)**, where you write failing tests first, then implement code to make them pass. This is a valuable industry practice.
+</Note>
+
+### Test Directory Structure
+
+<CodeGroup>
+```bash PNG Homework Tests
+PNG_HW/tests/
+├── test_chunks.c     # Tests for png_chunks.c functions
+├── test_crc.c        # Tests for CRC calculation
+├── test_overlay.c    # Tests for image overlay
+├── test_reader.c     # Tests for PNG file reading
+├── test_steg.c       # Tests for steganography
+└── data/             # Test data files (PNG images)
+    ├── sample.png
+    ├── Large_batman_3.png
+    └── ...
+```
+
+```bash ZLIB Homework Tests
+ZLIB_HW/tests/
+├── test_huff.c       # Tests for Huffman coding
+├── test_lz.c         # Tests for LZ77 compression
+├── test_mixed.c      # Integration tests
+├── test_zlib.c       # Tests for gzip format
+└── data/             # Test data files (compressed files)
+    ├── sample.gz
+    ├── test.txt
+    └── ...
+```
+</CodeGroup>
+
+## Running Tests
+
+### Basic Test Execution
+
+<Steps>
+  <Step title="Compile the Tests">
+    Always compile before running tests:
+    
+    ```bash
+    make clean all
+    ```
+    
+    This creates the test executable: `bin/png_tests` or `bin/zlib_tests`
+  </Step>
+
+  <Step title="Run the Test Suite">
+    Execute all tests:
+    
+    ```bash
+    bin/png_tests
+    ```
+    
+    You'll see output showing passed/failed tests.
+  </Step>
+
+  <Step title="Interpret the Results">
+    Look for the summary at the end:
+    
+    ```
+    [====] Synthesis: Tested: 15 | Passing: 12 | Failing: 3 | Crashing: 0
+    ```
+  </Step>
+</Steps>
+
+### Verbose Output
+
+For more detailed information about each test:
+
+```bash
+bin/png_tests --verbose=0
+```
+
+This shows:
+- Each test as it runs
+- Assertions that pass/fail
+- Error messages and line numbers
+- Execution time for each test
+
+**Example output**:
+```
+[====] Running 15 tests from 5 test suites.
+[RUN ] test_reader::test_png_open
+[----] test_reader::test_png_open: (0.001s)
+[PASS] test_reader::test_png_open
+[RUN ] test_reader::test_png_read_chunk
+[FAIL] test_reader::test_png_read_chunk: Assertion failed: chunk.length == 13
+  Expected: 13
+  Actual: 0
+  At: tests/test_reader.c:45
+[----] test_reader::test_png_read_chunk: (0.002s)
+```
+
+### Running Specific Tests
+
+<CodeGroup>
+```bash Filter by Test Suite
+# Run only tests from test_reader.c
+bin/png_tests --filter=test_reader
+```
+
+```bash Filter by Test Name
+# Run only test_png_open
+bin/png_tests --filter=test_png_open
+```
+
+```bash Pattern Matching
+# Run all tests with "chunk" in the name
+bin/png_tests --filter="*chunk*"
+```
+</CodeGroup>
+
+### Other Useful Options
+
+```bash
+# List all available tests without running them
+bin/png_tests --list
+
+# Run tests and show detailed statistics
+bin/png_tests --verbose=1
+
+# Stop on first failure
+bin/png_tests --fail-fast
+
+# Show help for all Criterion options
+bin/png_tests --help
+```
+
+## Understanding Test Output
+
+### Successful Test Run
+
+```
+[====] Running 5 tests from 2 test suites.
+[RUN ] test_chunks::test_parse_ihdr
+[----] test_chunks::test_parse_ihdr: (0.001s)
+[PASS] test_chunks::test_parse_ihdr
+[RUN ] test_chunks::test_parse_plte
+[----] test_chunks::test_parse_plte: (0.001s)
+[PASS] test_chunks::test_parse_plte
+...
+[====] Synthesis: Tested: 5 | Passing: 5 | Failing: 0 | Crashing: 0
+```
+
+**What it means**: All 5 tests passed! Your code is working correctly for these test cases.
+
+### Failed Assertion
+
+```
+[FAIL] test_reader::test_png_read_chunk: Assertion failed
+  tests/test_reader.c:52: cr_assert_eq(chunk.length, 13);
+  Expected: 13
+  Actual: 0
+```
+
+**What it means**: 
+- Test failed at line 52 of `tests/test_reader.c`
+- Expected `chunk.length` to be 13
+- Actual value was 0
+- Your `png_read_chunk` function isn't reading the length correctly
+
+### Segmentation Fault / Crash
+
+```
+[RUN ] test_reader::test_png_parse_plte
+[CRASH] test_reader::test_png_parse_plte: Segmentation fault
+  Received signal: SIGSEGV
+```
+
+**What it means**:
+- Your code crashed (segfault)
+- Likely causes: null pointer dereference, buffer overflow, use-after-free
+- Use GDB or Valgrind to debug (see [Debugging guide](/debugging))
+
+### Memory Leak Detection
+
+Criterion can detect memory leaks:
+
+```
+[WARN] test_chunks::test_parse_plte: Memory leak detected
+  16 bytes leaked from allocation at src/png_chunks.c:78
+```
+
+**What it means**: You allocated memory but didn't free it. Review your `malloc`/`free` calls.
+
+## Anatomy of a Test Case
+
+Here's a simple test from `test_reader.c`:
+
+```c
+#include <criterion/criterion.h>
+#include "png_reader.h"
+
+// Test suite name: test_reader
+// Test name: test_png_open_valid_file
+Test(test_reader, test_png_open_valid_file) {
+    // Arrange: Set up test data
+    const char *filename = "tests/data/sample.png";
+    
+    // Act: Call the function being tested
+    FILE *fp = png_open(filename);
+    
+    // Assert: Verify the results
+    cr_assert_not_null(fp, "png_open should return non-NULL for valid file");
+    
+    // Cleanup
+    if (fp) fclose(fp);
+}
+```
+
+**Key components**:
+- `Test(suite_name, test_name)` - Defines a test case
+- `cr_assert_*` - Assertion macros that check conditions
+- Arrange-Act-Assert pattern for clear test structure
+
+### Common Assertion Macros
+
+```c
+// Equality checks
+cr_assert_eq(actual, expected, "message");
+cr_assert_neq(actual, expected, "message");
+
+// Null checks
+cr_assert_null(ptr, "message");
+cr_assert_not_null(ptr, "message");
+
+// Boolean checks
+cr_assert(condition, "message");
+cr_assert_not(condition, "message");
+
+// String comparison
+cr_assert_str_eq(str1, str2, "message");
+cr_assert_str_neq(str1, str2, "message");
+
+// Memory comparison
+cr_assert_arr_eq(arr1, arr2, length, "message");
+
+// Floating point comparison
+cr_assert_float_eq(actual, expected, epsilon, "message");
+```
+
+## Writing Your Own Tests
+
+<Warning>
+  The provided tests are MINIMAL and do not comprehensively test your code. The actual grading tests are much more extensive. You are strongly encouraged to write additional tests.
+</Warning>
+
+### Creating a New Test File
+
+<Steps>
+  <Step title="Create Test File">
+    Create a new file in the `tests/` directory:
+    
+    ```bash
+    touch tests/test_my_functions.c
+    ```
+  </Step>
+
+  <Step title="Add Required Includes">
+    ```c
+    #include <criterion/criterion.h>
+    #include "png_chunks.h"  // Headers for functions you're testing
+    #include "png_reader.h"
+    ```
+  </Step>
+
+  <Step title="Write Test Cases">
+    ```c
+    Test(my_tests, test_basic_functionality) {
+        // Your test code here
+        int result = my_function(5);
+        cr_assert_eq(result, 10, "Expected my_function(5) to return 10");
+    }
+    
+    Test(my_tests, test_error_handling) {
+        // Test error cases
+        int result = my_function(NULL);
+        cr_assert_eq(result, -1, "Should return -1 for NULL input");
+    }
+    ```
+  </Step>
+
+  <Step title="Rebuild and Run">
+    ```bash
+    make clean all
+    bin/png_tests --filter=my_tests
+    ```
+  </Step>
+</Steps>
+
+### Example: Testing PNG Chunk Reading
+
+```c
+#include <criterion/criterion.h>
+#include "png_reader.h"
+#include "png_chunks.h"
+
+Test(custom_tests, test_read_ihdr_chunk) {
+    // Open test file
+    FILE *fp = png_open("tests/data/sample.png");
+    cr_assert_not_null(fp, "Failed to open test file");
+    
+    // Read first chunk (should be IHDR)
+    png_chunk_t chunk;
+    int result = png_read_chunk(fp, &chunk);
+    
+    // Verify success
+    cr_assert_eq(result, 0, "png_read_chunk should succeed");
+    
+    // Verify chunk type
+    cr_assert_str_eq(chunk.type, "IHDR", "First chunk should be IHDR");
+    
+    // Verify chunk length
+    cr_assert_eq(chunk.length, 13, "IHDR chunk should be 13 bytes");
+    
+    // Verify data was allocated
+    cr_assert_not_null(chunk.data, "Chunk data should be allocated");
+    
+    // Parse IHDR
+    png_ihdr_t ihdr;
+    result = png_parse_ihdr(&chunk, &ihdr);
+    cr_assert_eq(result, 0, "png_parse_ihdr should succeed");
+    
+    // Cleanup
+    png_free_chunk(&chunk);
+    fclose(fp);
+}
+```
+
+### Test Setup and Teardown
+
+For tests that need common setup/cleanup:
+
+```c
+// Global setup (runs once before all tests in the suite)
+TestSuite(my_suite, .init = suite_setup, .fini = suite_teardown);
+
+void suite_setup(void) {
+    // Initialize test resources
+}
+
+void suite_teardown(void) {
+    // Clean up test resources
+}
+
+// Per-test setup (runs before each test)
+Test(my_suite, my_test, .init = test_setup, .fini = test_teardown) {
+    // Test code
+}
+
+void test_setup(void) {
+    // Runs before each test
+}
+
+void test_teardown(void) {
+    // Runs after each test
+}
+```
+
+## Testing Best Practices
+
+### 1. Test Edge Cases
+
+Don't just test the happy path:
+
+```c
+Test(edge_cases, test_null_input) {
+    int result = my_function(NULL);
+    cr_assert_eq(result, -1, "Should handle NULL input");
+}
+
+Test(edge_cases, test_empty_file) {
+    FILE *fp = fopen("tests/data/empty.png", "r");
+    png_chunk_t chunk;
+    int result = png_read_chunk(fp, &chunk);
+    cr_assert_eq(result, -1, "Should fail on empty file");
+    fclose(fp);
+}
+
+Test(edge_cases, test_max_palette_size) {
+    // Test with 256-color palette (maximum)
+}
+```
+
+### 2. Test One Thing Per Test
+
+```c
+// Good: Focused test
+Test(chunks, test_ihdr_width) {
+    // ... setup ...
+    cr_assert_eq(ihdr.width, 320, "Width should be 320");
+}
+
+Test(chunks, test_ihdr_height) {
+    // ... setup ...
+    cr_assert_eq(ihdr.height, 320, "Height should be 320");
+}
+
+// Bad: Testing multiple things
+Test(chunks, test_everything) {
+    cr_assert_eq(ihdr.width, 320);
+    cr_assert_eq(ihdr.height, 320);
+    cr_assert_eq(ihdr.bit_depth, 8);
+    // ... many more assertions ...
+}
+```
+
+### 3. Use Descriptive Test Names
+
+```c
+// Good
+Test(crc, test_crc_matches_known_value)
+Test(reader, test_read_chunk_rejects_invalid_crc)
+Test(steg, test_encode_fails_when_message_too_long)
+
+// Bad
+Test(crc, test1)
+Test(reader, test2)
+Test(steg, broken)
+```
+
+### 4. Clean Up Resources
+
+```c
+Test(cleanup, test_memory_management) {
+    png_color_t *colors = NULL;
+    size_t count = 0;
+    
+    // ... test code ...
+    
+    // Always free allocated memory
+    if (colors) free(colors);
+}
+```
+
+## Integration Testing
+
+Beyond unit tests, test complete workflows:
+
+```bash
+# PNG Homework: Test full steganography workflow
+bin/png -f tests/data/sample.png -e "secret message" -o /tmp/encoded.png
+bin/png -f /tmp/encoded.png -d
+# Should print: Hidden message: secret message
+
+# ZLIB Homework: Test compress/decompress roundtrip
+bin/zlib -i tests/data/test.txt -c -o /tmp/compressed.gz
+bin/zlib -i /tmp/compressed.gz -d -o /tmp/decompressed.txt
+diff tests/data/test.txt /tmp/decompressed.txt
+# Should show no differences
+```
+
+## Debugging Failed Tests
+
+### Using GDB with Tests
+
+```bash
+# Compile with debug symbols
+make clean debug
+
+# Run specific test under GDB
+gdb bin/png_tests
+(gdb) run --filter=test_png_read_chunk
+# When it crashes or fails:
+(gdb) backtrace
+(gdb) print chunk.length
+```
+
+### Using Valgrind with Tests
+
+```bash
+# Check for memory errors
+valgrind --leak-check=full bin/png_tests --filter=test_parse_plte
+```
+
+See the [Debugging guide](/debugging) for more details.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Debug Your Code" icon="bug" href="/debugging">
+    Learn to use GDB, Valgrind, and other debugging tools
+  </Card>
+  
+  <Card title="Build the Project" icon="hammer" href="/building">
+    Understand the compilation process and make targets
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+- [Criterion Documentation](http://criterion.readthedocs.io/en/master/)
+- [Test-Driven Development Guide](https://en.wikipedia.org/wiki/Test-driven_development)
+- Course Piazza for test-specific questions

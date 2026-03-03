@@ -1,0 +1,532 @@
+---
+title: "DEFLATE/INFLATE API"
+description: "High-level GZIP compression and decompression functions"
+---
+
+## Overview
+
+The DEFLATE/INFLATE module provides the high-level API for GZIP file compression and decompression. It combines LZ77 compression with Huffman coding according to RFC 1951 (DEFLATE) and RFC 1952 (GZIP file format).
+
+## Constants
+
+### Program Modes
+
+```c
+#define M_DEFLATE  0  // Compression mode
+#define M_INFLATE  1  // Decompression mode
+#define M_INFO     2  // Information/metadata mode
+```
+
+### Block Types
+
+```c
+#define BF_SET              1  // BFINAL flag set (last block)
+#define BT_STATIC           1  // Static/fixed Huffman coding
+#define BT_DYNAMIC          2  // Dynamic Huffman coding
+#define BT_NO_COMPRESSION   0  // No compression
+#define BT_MASK             3  // Mask for BTYPE bits
+#define DEFLATE_BLOCK_SIZE  65535  // Maximum block size (64KB - 1)
+```
+
+### Compression Levels
+
+```c
+#define L_NO_COMPRESSION         0   // No compression
+#define L_BEST_SPEED             1   // Fastest compression
+#define L_BEST_COMPRESSION       9   // Best compression ratio
+#define L_DEFAULT_COMPRESSION   -1   // Default level
+```
+
+### Compression Strategies
+
+```c
+#define S_FILTERED            1  // Filtered data
+#define S_HUFFMAN_ONLY        2  // Huffman only, no LZ77
+#define S_RLE                 3  // Run-length encoding
+#define S_FIXED               4  // Fixed Huffman codes
+#define S_DEFAULT_STRATEGY    0  // Default strategy
+```
+
+### GZIP Header Flags
+
+```c
+#define F_TEXT     1   // File is ASCII text
+#define F_HCRC     2   // Header CRC present
+#define F_EXTRA    4   // Extra field present
+#define F_NAME     8   // Original filename present
+#define F_COMMENT  16  // Comment present
+```
+
+### Fixed Huffman Code Definitions
+
+```c
+// Literal codes 0-143: 8 bits
+#define FH_LIT1LEN     8
+#define FH_LIT1START   0b00110000   // 0x30
+#define FH_LIT1END     0b10111111   // 0xBF
+
+// Literal codes 144-255: 9 bits  
+#define FH_LIT2LEN     9
+#define FH_LIT2START   0b110010000  // 0x190
+#define FH_LIT2END     0b111111111  // 0x1FF
+
+// End/length codes 256-279: 7 bits
+#define FH_EXT1LEN     7
+#define FH_EXT1START   0b0000000    // 0x00
+#define FH_EXT1END     0b0010111    // 0x17
+
+// Length codes 280-287: 8 bits
+#define FH_EXT2LEN     8
+#define FH_EXT2START   0b11000000   // 0xC0
+#define FH_EXT2END     0b11000111   // 0xC7
+```
+
+## Data Structures
+
+### gz_header_t
+
+Represents a GZIP member header and trailer information.
+
+```c
+typedef struct {
+    unsigned char  cm;         // compression method
+    unsigned char  flags;      // flags byte
+    unsigned int   mtime;      // modification time
+    unsigned char  xflags;     // extra flags
+    unsigned char  os;         // operating system
+    unsigned short extra_len;  // extra field length (optional)
+    char*          extra;      // pointer to extra field or NULL (optional)
+    char*          name;       // pointer to zero-terminated filename or NULL (optional)
+    char*          comment;    // pointer to zero-terminated comment or NULL (optional)
+    unsigned short hcrc;       // header CRC, 16 bits (optional)
+    unsigned int   crc;        // 32-bit CRC for the data
+    unsigned int   full_size;  // uncompressed size
+} gz_header_t;
+```
+
+<ResponseField name="cm" type="unsigned char">
+  Compression method: 0 (no compression) or 8 (DEFLATE)
+</ResponseField>
+
+<ResponseField name="flags" type="unsigned char">
+  Bit flags indicating presence of optional fields (F_TEXT, F_HCRC, F_EXTRA, F_NAME, F_COMMENT)
+</ResponseField>
+
+<ResponseField name="mtime" type="unsigned int">
+  Modification time as Unix timestamp (seconds since epoch), little-endian
+</ResponseField>
+
+<ResponseField name="xflags" type="unsigned char">
+  Extra flags for compression level (2 = maximum compression, 4 = fastest)
+</ResponseField>
+
+<ResponseField name="os" type="unsigned char">
+  Operating system identifier where compression took place
+</ResponseField>
+
+<ResponseField name="extra_len" type="unsigned short">
+  Length of extra field in bytes (only valid if F_EXTRA flag is set)
+</ResponseField>
+
+<ResponseField name="extra" type="char*">
+  Pointer to extra field data, or `NULL` if not present. Must be freed by caller
+</ResponseField>
+
+<ResponseField name="name" type="char*">
+  Pointer to zero-terminated original filename, or `NULL` if not present. Must be freed by caller
+</ResponseField>
+
+<ResponseField name="comment" type="char*">
+  Pointer to zero-terminated comment string, or `NULL` if not present. Must be freed by caller
+</ResponseField>
+
+<ResponseField name="hcrc" type="unsigned short">
+  CRC16 of the header (only valid if F_HCRC flag is set)
+</ResponseField>
+
+<ResponseField name="crc" type="unsigned int">
+  CRC32 of the uncompressed data, little-endian (from trailer)
+</ResponseField>
+
+<ResponseField name="full_size" type="unsigned int">
+  Size of uncompressed data modulo 2^32, little-endian (from trailer)
+</ResponseField>
+
+### block_header_t
+
+Represents a compressed block header (conceptual structure, not actual C type).
+
+```c
+typedef struct {
+    1_bit  BFINAL;  // 1 if this is the last block
+    2_bits BTYPE;   // Block type (00, 01, 10, or 11)
+} block_header_t;
+```
+
+## Functions
+
+### deflate
+
+Compresses data using the DEFLATE algorithm and wraps it in GZIP format.
+
+```c
+char* deflate(char* filename, char* bytes, size_t len, size_t* out_len);
+```
+
+<ParamField path="filename" type="char*" required>
+  Pointer to the filename string (used for metadata in GZIP header). Can be `NULL`
+</ParamField>
+
+<ParamField path="bytes" type="char*" required>
+  Pointer to the input data buffer to compress
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Length of the input data in bytes
+</ParamField>
+
+<ParamField path="out_len" type="size_t*" required>
+  Output parameter that receives the length of the compressed data in bytes
+</ParamField>
+
+<ResponseField name="return" type="char*">
+  Pointer to a dynamically allocated buffer containing the GZIP-compressed data, or `NULL` on error
+</ResponseField>
+
+#### Behavior
+
+1. Creates GZIP member header with metadata
+2. Computes CRC32 of input data
+3. Splits input into blocks of at most 65,535 bytes
+4. For each block:
+   - Applies LZ77 compression to create tokens
+   - Applies Huffman encoding (dynamic or fixed)
+   - Sets BFINAL flag on last block
+5. Appends GZIP trailer (CRC32 and uncompressed size)
+
+#### Block Size Constraints
+
+- Compressed blocks must hold at most 65,535 bytes when decompressed
+- This ensures compatibility and consistent testing
+- However, decompression must handle blocks of any size
+
+#### Error Conditions
+
+- Returns `NULL` if `bytes` is `NULL`
+- Returns `NULL` if `out_len` is `NULL`
+- Returns `NULL` if memory allocation fails
+- Returns `NULL` if compression fails
+
+#### Memory Management
+
+The returned buffer is dynamically allocated using `malloc()`. The caller must free it using `free()`.
+
+#### Example
+
+```c
+char input_data[100000];
+size_t input_len = 100000;
+size_t compressed_len = 0;
+
+char* compressed = deflate("test.txt", input_data, input_len, &compressed_len);
+
+if (compressed == NULL) {
+    fprintf(stderr, "Compression failed\n");
+    return -1;
+}
+
+printf("Compressed %zu bytes to %zu bytes (%.2f%% ratio)\n",
+       input_len, compressed_len, 
+       100.0 * compressed_len / input_len);
+
+// Write to file
+FILE* out = fopen("output.gz", "wb");
+fwrite(compressed, 1, compressed_len, out);
+fclose(out);
+
+free(compressed);
+```
+
+### inflate
+
+Decompresses GZIP-compressed data using the INFLATE algorithm.
+
+```c
+char* inflate(char* bytes, size_t comp_len);
+```
+
+<ParamField path="bytes" type="char*" required>
+  Pointer to the compressed data buffer (including GZIP header and trailer)
+</ParamField>
+
+<ParamField path="comp_len" type="size_t" required>
+  Length of the compressed data in bytes
+</ParamField>
+
+<ResponseField name="return" type="char*">
+  Pointer to a dynamically allocated buffer containing the decompressed data, or `NULL` on error. The size of the decompressed data is stored in the GZIP trailer's `full_size` field
+</ResponseField>
+
+#### Behavior
+
+1. Validates GZIP header magic bytes (0x1F 0x8B)
+2. Parses GZIP header metadata (optional fields)
+3. Processes compressed blocks sequentially:
+   - Reads 3-bit block header (BFINAL, BTYPE)
+   - Decodes based on block type (00, 01, or 10)
+   - Continues until BFINAL block is processed
+4. Validates CRC32 of decompressed data
+5. Validates uncompressed size matches trailer
+
+#### Block Processing
+
+##### No Compression (BTYPE = 00)
+- Skip to byte boundary
+- Read 16-bit length (LEN)
+- Read 16-bit one's complement (NLEN)
+- Verify LEN == ~NLEN
+- Copy LEN bytes directly
+
+##### Fixed Huffman (BTYPE = 01)
+- Use predefined code table (RFC 1951 Section 3.2.6)
+- Decode symbols until end-of-block (256)
+- Perform LZ77 decompression
+
+##### Dynamic Huffman (BTYPE = 10)
+- Read tree metadata (HLIT, HDIST, HCLEN)
+- Decode code length tree
+- Decode literal/length and distance trees
+- Decode symbols until end-of-block (256)
+- Perform LZ77 decompression
+
+#### Error Conditions
+
+- Returns `NULL` if `bytes` is `NULL`
+- Returns `NULL` if magic bytes are invalid
+- Returns `NULL` if BTYPE = 11 (reserved)
+- Returns `NULL` if CRC32 validation fails
+- Returns `NULL` if size validation fails
+- Returns `NULL` if Huffman decoding fails
+- Returns `NULL` if LZ77 decompression encounters invalid distance codes (30, 31)
+
+#### Memory Management
+
+The returned buffer is dynamically allocated using `malloc()`. The caller must free it using `free()`.
+
+#### Example
+
+```c
+// Read compressed file
+FILE* in = fopen("input.gz", "rb");
+fseek(in, 0, SEEK_END);
+size_t comp_len = ftell(in);
+fseek(in, 0, SEEK_SET);
+
+char* compressed = malloc(comp_len);
+fread(compressed, 1, comp_len, in);
+fclose(in);
+
+// Decompress
+char* decompressed = inflate(compressed, comp_len);
+
+if (decompressed == NULL) {
+    fprintf(stderr, "Decompression failed\n");
+    free(compressed);
+    return -1;
+}
+
+printf("Decompression successful\n");
+
+free(compressed);
+free(decompressed);
+```
+
+### parse_member
+
+Parses a GZIP member header from a file stream.
+
+```c
+int parse_member(FILE* file, gz_header_t* header);
+```
+
+<ParamField path="file" type="FILE*" required>
+  Pointer to an open file with the file position at the start of a GZIP member
+</ParamField>
+
+<ParamField path="header" type="gz_header_t*" required>
+  Pointer to a `gz_header_t` structure to receive the parsed header data
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns 0 on success, -1 on error
+</ResponseField>
+
+#### Behavior
+
+1. Validates magic bytes (0x1F 0x8B)
+2. Reads compression method (CM)
+3. Reads flags byte (FLG)
+4. Reads modification time (MTIME, 4 bytes, little-endian)
+5. Reads extra flags (XFL)
+6. Reads OS identifier
+7. If F_EXTRA flag set:
+   - Reads extra field length (2 bytes, little-endian)
+   - Allocates and reads extra field data
+8. If F_NAME flag set:
+   - Reads zero-terminated filename string
+   - Allocates memory for filename
+9. If F_COMMENT flag set:
+   - Reads zero-terminated comment string
+   - Allocates memory for comment
+10. If F_HCRC flag set:
+    - Reads 2-byte header CRC
+11. Seeks to trailer (last 8 bytes)
+12. Reads CRC32 (4 bytes, little-endian)
+13. Reads uncompressed size (4 bytes, little-endian)
+
+#### Error Conditions
+
+- Returns -1 if `file` is `NULL`
+- Returns -1 if `header` is `NULL`
+- Returns -1 if magic bytes are incorrect
+- Returns -1 if file read fails
+- Returns -1 if memory allocation fails
+
+#### Memory Management
+
+The function allocates memory for `extra`, `name`, and `comment` fields if present. The caller is responsible for freeing these using `free()` when done.
+
+#### Example
+
+```c
+FILE* file = fopen("archive.gz", "rb");
+if (file == NULL) {
+    perror("fopen");
+    return -1;
+}
+
+gz_header_t header;
+memset(&header, 0, sizeof(header));
+
+if (parse_member(file, &header) != 0) {
+    fprintf(stderr, "Failed to parse GZIP member\n");
+    fclose(file);
+    return -1;
+}
+
+printf("Compression method: %d\n", header.cm);
+printf("Modification time: %u\n", header.mtime);
+if (header.name != NULL) {
+    printf("Filename: %s\n", header.name);
+}
+printf("Uncompressed size: %u\n", header.full_size);
+
+// Clean up
+free(header.extra);
+free(header.name);
+free(header.comment);
+fclose(file);
+```
+
+### skip_gz_header_to_compressed_data
+
+Skips the GZIP header and positions the file pointer at the compressed data.
+
+```c
+int skip_gz_header_to_compressed_data(FILE* file, gz_header_t* header);
+```
+
+<ParamField path="file" type="FILE*" required>
+  Pointer to an open file positioned at the start of a GZIP member
+</ParamField>
+
+<ParamField path="header" type="gz_header_t*" required>
+  Pointer to a `gz_header_t` structure to receive header metadata
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns 0 on success, -1 on error
+</ResponseField>
+
+## GZIP File Format
+
+### Member Structure
+
+A GZIP file consists of one or more "members" concatenated together:
+
+```
++-------------------+
+| Header            | (variable size)
++-------------------+
+| Compressed Data   | (variable size)
++-------------------+
+| Trailer           | (8 bytes)
++-------------------+
+```
+
+### Header Layout
+
+```
++---+---+---+---+---+---+---+---+---+---+
+|ID1|ID2|CM |FLG|     MTIME     |XFL|OS |
++---+---+---+---+---+---+---+---+---+---+
+```
+
+- **ID1, ID2**: Magic bytes (0x1F, 0x8B)
+- **CM**: Compression method (8 = DEFLATE)
+- **FLG**: Flags byte
+- **MTIME**: Modification time (4 bytes, little-endian)
+- **XFL**: Extra flags
+- **OS**: Operating system
+
+Followed by optional fields based on flags:
+- **XLEN + Extra**: If F_EXTRA set
+- **Filename**: If F_NAME set (zero-terminated)
+- **Comment**: If F_COMMENT set (zero-terminated)
+- **CRC16**: If F_HCRC set (2 bytes)
+
+### Trailer Layout
+
+```
++---+---+---+---+---+---+---+---+
+|      CRC32    |     ISIZE     |
++---+---+---+---+---+---+---+---+
+```
+
+- **CRC32**: CRC-32 of uncompressed data (4 bytes, little-endian)
+- **ISIZE**: Uncompressed size modulo 2^32 (4 bytes, little-endian)
+
+## Magic Number
+
+```c
+#define ID 0x1f8b
+```
+
+All GZIP members start with the two-byte magic number 0x1F 0x8B.
+
+## Bit Packing
+
+From RFC 1951:
+
+```
+Data elements are packed into bytes in order of
+increasing bit number within the byte, i.e., starting
+with the least-significant bit of the byte.
+
+Data elements other than Huffman codes are packed
+starting with the least-significant bit of the data
+element.
+
+Huffman codes are packed starting with the most-
+significant bit of the code.
+
++--------+
+|76543210|
++--------+
+```
+
+## See Also
+
+- [LZ77 Compression API](/zlib/api/lz) - Low-level LZ77 compression
+- [Huffman Coding API](/zlib/api/huffman) - Huffman encoding/decoding
+- [CRC API](/zlib/api/crc) - CRC computation for GZIP

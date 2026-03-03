@@ -1,0 +1,316 @@
+---
+title: "Grading Criteria"
+description: "How the ZLIB homework will be graded and tested"
+---
+
+## Grading Overview
+
+Your assignment will be graded based on:
+
+1. **Correctness** - Does your code produce the correct output?
+2. **Output Format** - Does output exactly match specifications?
+3. **Functionality** - Do all required features work?
+4. **Error Handling** - Does your code handle errors properly?
+5. **Code Quality** - Is your code well-structured and free of memory leaks?
+
+<Warning>
+The tests visible in Codegrade during development are **NOT** the same as the grading tests. The real test cases run after the deadline.
+</Warning>
+
+## Test Categories
+
+### Basic Functionality Tests
+
+These tests verify:
+- Program compiles without errors
+- Command-line argument processing works
+- Help message format is correct
+- Error messages match expected format
+
+### Compression Tests
+
+These tests verify:
+- LZ77 compression finds matches correctly
+- Huffman encoding produces valid trees
+- DEFLATE algorithm produces valid compressed output
+- Compressed files are valid GZIP format
+- CRC checksums are computed correctly
+
+### Decompression Tests
+
+These tests verify:
+- GZIP header parsing works correctly
+- Uncompressed blocks (BTYPE=00) decompress correctly
+- Fixed Huffman blocks (BTYPE=01) decompress correctly
+- Dynamic Huffman blocks (BTYPE=10) decompress correctly
+- LZ77 distance/length pairs decode correctly
+- Multi-block files decompress correctly
+- CRC validation works
+
+### Edge Case Tests
+
+These tests verify your code handles:
+- Empty files
+- Single-byte files
+- Files with no matches (all literals)
+- Files with maximum distance references (32,768)
+- Files with maximum length matches (258)
+- LZ77 references that wrap (distance < length)
+- Optional GZIP header fields (name, comment, extra, HCRC)
+- Multiple blocks in a single member
+
+### Error Handling Tests
+
+These tests verify your code properly rejects:
+- Invalid GZIP magic numbers
+- Corrupt headers
+- Invalid block types (BTYPE=11)
+- Invalid distance codes (30, 31)
+- Malformed Huffman trees
+- Files that end prematurely
+- NULL pointer arguments
+- Invalid command-line arguments
+
+## Output Format Grading
+
+<Warning>
+Output format is **CRITICAL**. Even minor deviations will significantly impact your grade.
+</Warning>
+
+### What is Checked
+
+- Exact text of all output messages
+- Spacing and punctuation
+- Field ordering in member summary
+- Number formatting (decimal, no leading zeros)
+- Newline placement
+- Error messages go to stderr, not stdout
+- No extraneous output in production mode
+
+### Use Provided Macros
+
+The assignment provides macros in `global.h` for all output:
+
+```c
+PRINT_USAGE(prog_name)
+PRINT_ERROR_BAD_HEADER()
+PRINT_ERROR_OPEN_FILE(filename)
+PRINT_ERROR_MISSING_I_FLAG()
+PRINT_ERROR_REQUIRE_ONE_OF_MCD()
+PRINT_ERROR_MISSING_O_FLAG()
+PRINT_MEMBER_SUMMARY_HEADER(filename)
+PRINT_MEMBER_LINE(member_label, cm, mtime, os, extra, comment, size, crc_valid)
+```
+
+<Note>
+**Use these macros exactly as provided.** Do not create your own printf statements for these messages.
+</Note>
+
+## Testing Approach
+
+### Automated Testing
+
+Grading uses automated test scripts that:
+1. Compile your code with the provided Makefile
+2. Run your program with various inputs
+3. Compare output to expected results (byte-for-byte)
+4. Check exit codes (0 for success, 1 for errors)
+5. Verify compressed files are valid GZIP
+6. Decompress your output and verify it matches original
+
+### Test Data
+
+Your code will be tested with:
+- Text files (ASCII)
+- Binary files
+- Small files (< 100 bytes)
+- Medium files (100 - 10,000 bytes)
+- Large files (> 65,535 bytes, requiring multiple blocks)
+- Highly compressible files (repetitive data)
+- Low compressibility files (random data)
+- Real-world files (images, documents, etc.)
+
+### Comparison Testing
+
+Your output may be compared against:
+- Reference implementation results
+- Standard `gzip` utility output
+- Other compression utilities
+
+<Note>
+Your compressed output doesn't need to be identical to `gzip`, but it must be valid and decompressible.
+</Note>
+
+## Memory Testing
+
+### Memory Leak Detection
+
+Your code will be tested with Valgrind to detect:
+- Memory leaks
+- Invalid memory access
+- Use of uninitialized memory
+- Double frees
+- Invalid frees
+
+<Warning>
+Memory leaks and invalid memory access will result in point deductions.
+</Warning>
+
+### Best Practices
+
+- Always check malloc/calloc return values
+- Free all allocated memory before returning
+- Free memory in error paths too
+- Don't access memory after freeing it
+- Initialize all variables before use
+- Don't read past end of buffers
+
+## Performance Considerations
+
+While performance is not the primary grading criterion, your code should:
+
+- Complete within reasonable time limits (e.g., < 10 seconds for most files)
+- Not use excessive memory
+- Not have O(n²) or worse algorithms where O(n) is possible
+
+<Note>
+The assignment mentions "optimize a program" in the introduction, but the focus is on correctness and debugging rather than extreme optimization.
+</Note>
+
+## Code Quality
+
+### What is Evaluated
+
+- Code organization (functions in correct files)
+- Proper use of data structures
+- Appropriate function decomposition
+- Consistent coding style
+- Meaningful variable names
+- No compiler warnings
+
+### What is NOT Graded
+
+- Comment density (though some comments are helpful)
+- Specific coding style (tabs vs spaces, etc.)
+- Efficiency beyond reasonable bounds
+
+## Partial Credit
+
+The grading tests are designed to award partial credit:
+
+- If compression doesn't work but decompression does, you'll get credit for decompression
+- If fixed Huffman works but dynamic doesn't, you'll get credit for fixed
+- If argument parsing works but compression fails, you'll get credit for argument parsing
+
+<Note>
+Implement features incrementally and test each one. Getting partial credit is better than trying to implement everything and having nothing work.
+</Note>
+
+## Common Mistakes to Avoid
+
+### Output Format Issues
+
+- Using printf instead of provided macros
+- Adding debug output in production builds
+- Sending errors to stdout instead of stderr
+- Extra newlines or spacing
+
+### Algorithm Issues
+
+- Off-by-one errors in bit manipulation
+- Incorrect byte/bit ordering (endianness)
+- Not handling LZ77 wrapping (distance < length)
+- Incorrect Huffman tree construction
+- Not terminating blocks with code 256
+
+### Memory Issues
+
+- Not checking malloc return values
+- Memory leaks in error paths
+- Buffer overruns
+- Using freed memory
+- Not freeing optional header fields
+
+### Error Handling Issues
+
+- Not returning NULL on errors
+- Not checking for invalid inputs
+- Continuing after errors instead of aborting
+- Not validating distance codes
+
+## Testing Strategy
+
+<Warning>
+**You must write your own tests!** The provided tests are minimal examples only.
+</Warning>
+
+### Recommended Testing Process
+
+<Steps>
+  <Step title="Start with argument parsing">
+    Test all flag combinations, missing arguments, invalid arguments
+  </Step>
+  
+  <Step title="Test LZ77 with simple data">
+    Create files with known repetitions, verify tokens are correct
+  </Step>
+  
+  <Step title="Test Huffman with known inputs">
+    Use examples from the RFC, verify bit patterns
+  </Step>
+  
+  <Step title="Test round-trip compression">
+    Compress then decompress, verify output matches input
+  </Step>
+  
+  <Step title="Test with real files">
+    Use provided test data, create your own test files
+  </Step>
+  
+  <Step title="Test error conditions">
+    Create corrupt files, test with invalid inputs
+  </Step>
+  
+  <Step title="Run Valgrind">
+    Check for memory leaks on all test cases
+  </Step>
+</Steps>
+
+### Debugging Tips
+
+- Use the `debug` macro liberally (only shows in debug builds)
+- Print intermediate values (bit positions, decoded symbols, etc.)
+- Test with very small files first (1-10 bytes)
+- Compare your output bit-by-bit with expected results
+- Use hexdump to examine binary files: `hexdump -C file.gz`
+- Use xxd to see bit patterns: `xxd -b file.gz`
+
+## Criterion Testing Framework
+
+The assignment uses Criterion for unit testing. While you don't need to write Criterion tests yourself, understanding how they work helps:
+
+- Tests are in the `tests/` directory
+- Each test calls your functions directly
+- Tests check return values and output
+- The reason main.c must only contain main() is so tests can link to your other functions
+
+## Final Checklist
+
+Before submission, verify:
+
+- [ ] Code compiles with no errors or warnings
+- [ ] All command-line argument combinations work
+- [ ] Member summary displays correctly
+- [ ] Compression produces valid GZIP files
+- [ ] Decompression works for all block types
+- [ ] Round-trip (compress then decompress) works
+- [ ] Error cases are handled properly
+- [ ] Output format exactly matches specifications
+- [ ] No memory leaks (check with Valgrind)
+- [ ] No extraneous output in production builds
+- [ ] main.c only contains #includes, #defines, and main()
+- [ ] You wrote comprehensive tests beyond the examples
+
+<Note>
+Start early and test frequently. This assignment is challenging and requires experimentation with the data formats.
+</Note>

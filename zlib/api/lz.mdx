@@ -1,0 +1,165 @@
+---
+title: "LZ77 Compression API"
+description: "Lempel-Ziv compression functions for GZIP implementation"
+---
+
+## Overview
+
+The LZ77 compression module provides functions to compress data by replacing repeated sequences with references to their previous occurrences. Each reference contains an offset and length component, with a maximum distance of 32,768 bytes and maximum length of 258 bytes.
+
+## Data Structures
+
+### lz_token_t
+
+Represents either a literal byte or a length-distance pair in the LZ77 compressed stream.
+
+```c
+typedef struct {
+    int is_literal;
+    unsigned char literal;
+    unsigned int length;
+    unsigned int distance;
+} lz_token_t;
+```
+
+<ResponseField name="is_literal" type="int">
+  Flag indicating token type: 1 for literal byte, 0 for length-distance pair
+</ResponseField>
+
+<ResponseField name="literal" type="unsigned char">
+  The literal byte value (only valid when `is_literal == 1`). Set to 0 for length-distance pairs
+</ResponseField>
+
+<ResponseField name="length" type="unsigned int">
+  Length component of the match (only valid when `is_literal == 0`). Range: 3-258 bytes. Set to 0 for literals
+</ResponseField>
+
+<ResponseField name="distance" type="unsigned int">
+  Distance/offset to the start of the repeated sequence (only valid when `is_literal == 0`). Range: 1-32768 bytes. Set to 0 for literals
+</ResponseField>
+
+## Constants
+
+```c
+#define LITLENGTH_BITS 9
+#define DISTANCE_BITS 5
+```
+
+## Functions
+
+### lz_compress_tokens
+
+Compresses input data using the LZ77 algorithm and returns an array of tokens.
+
+```c
+lz_token_t* lz_compress_tokens(const unsigned char* data, size_t len, size_t* num_tokens);
+```
+
+<ParamField path="data" type="const unsigned char*" required>
+  Pointer to the input data buffer to compress
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Length of the input data in bytes
+</ParamField>
+
+<ParamField path="num_tokens" type="size_t*" required>
+  Output parameter that receives the number of tokens in the returned array
+</ParamField>
+
+<ResponseField name="return" type="lz_token_t*">
+  Pointer to a dynamically allocated array of `lz_token_t` structures on success, or `NULL` on error
+</ResponseField>
+
+#### Behavior
+
+- Searches for the longest matching substring within the previous 32,768 bytes of the output buffer
+- If a match of at least 3 bytes is found, creates a length-distance token
+- If no match of at least 3 bytes is found, creates literal byte tokens
+- The compressor must find the **longest** possible match within the sliding window
+
+#### Error Conditions
+
+- Returns `NULL` if `data` is `NULL`
+- Returns `NULL` if illegal distance codes are encountered
+- Returns `NULL` on any invalid input data
+
+#### Memory Management
+
+The returned array is dynamically allocated using `malloc()`. The caller is responsible for freeing the memory using `free()` when done.
+
+#### Example
+
+```c
+const unsigned char input[] = "hello world hello";
+size_t num_tokens = 0;
+lz_token_t* tokens = lz_compress_tokens(input, strlen(input), &num_tokens);
+
+if (tokens == NULL) {
+    fprintf(stderr, "Compression failed\n");
+    return -1;
+}
+
+for (size_t i = 0; i < num_tokens; i++) {
+    if (tokens[i].is_literal) {
+        printf("Literal: '%c' (0x%02x)\n", tokens[i].literal, tokens[i].literal);
+    } else {
+        printf("Match: length=%u, distance=%u\n", 
+               tokens[i].length, tokens[i].distance);
+    }
+}
+
+free(tokens);
+```
+
+### lz_to_length_distance_codes
+
+Converts raw data to length-distance code representation.
+
+```c
+unsigned char* lz_to_length_distance_codes(unsigned char *data, size_t len, size_t* out_len);
+```
+
+<ParamField path="data" type="unsigned char*" required>
+  Pointer to the input data buffer
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Length of the input data in bytes
+</ParamField>
+
+<ParamField path="out_len" type="size_t*" required>
+  Output parameter that receives the length of the encoded output
+</ParamField>
+
+<ResponseField name="return" type="unsigned char*">
+  Pointer to a dynamically allocated buffer containing the encoded data, or `NULL` on error
+</ResponseField>
+
+## Decompression
+
+LZ77 decompression is performed within the `huffman_decode()` function (see [Huffman API](/zlib/api/huffman)). The decompression process:
+
+1. Reads length-distance pairs from the Huffman-decoded stream
+2. Copies bytes from the output buffer at the specified distance
+3. Handles cases where the match extends beyond the sliding window
+
+### Sliding Window Overflow
+
+When a length-distance pair references beyond the current position (e.g., distance=1, length=5):
+
+1. Copy the available bytes from the output buffer (n bytes)
+2. Continue copying with the new position until all length bytes are copied
+3. This effectively repeats the pattern byte-by-byte
+
+### Invalid Distance Codes
+
+Distance codes 30 and 31 are reserved and invalid. The decompressor must return an error if these codes are encountered.
+
+## Implementation Notes
+
+- The sliding window size is fixed at 32,768 bytes (32 KB)
+- Minimum match length is 3 bytes
+- Maximum match length is 258 bytes
+- The compressor should use an efficient search algorithm (e.g., hash table) to find matches
+- All multi-byte values are stored in little-endian format

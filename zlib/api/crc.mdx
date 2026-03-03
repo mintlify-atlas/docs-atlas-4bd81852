@@ -1,0 +1,368 @@
+---
+title: "CRC API"
+description: "CRC-32 computation for GZIP data integrity verification"
+---
+
+## Overview
+
+The CRC (Cyclic Redundancy Check) module provides functions for computing CRC-32 checksums used in GZIP files for data integrity verification. The CRC-32 algorithm detects accidental data corruption during transmission or storage.
+
+In GZIP files, the CRC-32 is computed over the uncompressed data and stored in the 8-byte trailer at the end of each member.
+
+## Functions
+
+### get_crc
+
+Computes the CRC-32 checksum of a data buffer.
+
+```c
+unsigned int get_crc(const unsigned char *buf, size_t len);
+```
+
+<ParamField path="buf" type="const unsigned char*" required>
+  Pointer to the data buffer to compute the CRC for
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Length of the data buffer in bytes
+</ParamField>
+
+<ResponseField name="return" type="unsigned int">
+  The computed CRC-32 value as a 32-bit unsigned integer
+</ResponseField>
+
+#### Behavior
+
+- Computes the CRC-32 checksum using the polynomial defined in RFC 1952
+- Uses the same algorithm as the standard GZIP implementation
+- Returns a 32-bit checksum value
+- The CRC is computed over the entire buffer from start to end
+
+#### Algorithm
+
+The CRC-32 algorithm uses:
+
+- **Polynomial**: 0x04C11DB7 (same as used in Ethernet, PNG, GZIP)
+- **Initial value**: 0xFFFFFFFF
+- **Final XOR**: 0xFFFFFFFF
+- **Bit order**: LSB first (reflected)
+
+The implementation typically uses a 256-entry lookup table for efficient computation.
+
+#### Error Conditions
+
+- If `buf` is `NULL`, behavior is undefined
+- If `len` is 0, the function should return the initial CRC value
+
+#### Example
+
+```c
+const unsigned char data[] = "Hello, World!";
+size_t len = strlen((char*)data);
+
+unsigned int crc = get_crc(data, len);
+
+printf("CRC-32: 0x%08X\n", crc);
+```
+
+#### Usage in GZIP Compression
+
+```c
+char input_data[100000];
+size_t input_len = 100000;
+
+// Compute CRC before compression
+unsigned int crc = get_crc((unsigned char*)input_data, input_len);
+
+// Compress data
+size_t compressed_len = 0;
+char* compressed = deflate("file.txt", input_data, input_len, &compressed_len);
+
+// CRC is automatically included in GZIP trailer by deflate()
+printf("Data CRC: 0x%08X\n", crc);
+
+free(compressed);
+```
+
+#### Usage in GZIP Decompression
+
+```c
+// Read compressed file
+FILE* in = fopen("data.gz", "rb");
+fseek(in, 0, SEEK_END);
+size_t comp_len = ftell(in);
+fseek(in, 0, SEEK_SET);
+
+char* compressed = malloc(comp_len);
+fread(compressed, 1, comp_len, in);
+fclose(in);
+
+// Decompress
+char* decompressed = inflate(compressed, comp_len);
+if (decompressed == NULL) {
+    fprintf(stderr, "Decompression failed\n");
+    free(compressed);
+    return -1;
+}
+
+// Extract expected CRC from GZIP trailer (last 8 bytes)
+// CRC is at offset comp_len - 8, size is at comp_len - 4
+unsigned int expected_crc;
+memcpy(&expected_crc, compressed + comp_len - 8, 4);
+
+// Get decompressed size from trailer
+unsigned int decompressed_size;
+memcpy(&decompressed_size, compressed + comp_len - 4, 4);
+
+// Compute actual CRC of decompressed data
+unsigned int actual_crc = get_crc((unsigned char*)decompressed, decompressed_size);
+
+// Verify CRC
+if (actual_crc == expected_crc) {
+    printf("CRC verification passed\n");
+} else {
+    fprintf(stderr, "CRC mismatch! Expected 0x%08X, got 0x%08X\n",
+            expected_crc, actual_crc);
+}
+
+free(compressed);
+free(decompressed);
+```
+
+## CRC-32 in GZIP Format
+
+### Trailer Structure
+
+The GZIP trailer consists of 8 bytes at the end of each member:
+
+```
++---+---+---+---+---+---+---+---+
+|      CRC32    |     ISIZE     |
++---+---+---+---+---+---+---+---+
+  0   1   2   3   4   5   6   7
+```
+
+- **Bytes 0-3**: CRC-32 of uncompressed data (little-endian)
+- **Bytes 4-7**: Size of uncompressed data modulo 2^32 (little-endian)
+
+### Reading CRC from File
+
+```c
+FILE* file = fopen("data.gz", "rb");
+
+// Seek to 8 bytes before end
+fseek(file, -8, SEEK_END);
+
+// Read CRC-32 (little-endian)
+unsigned int crc;
+fread(&crc, 4, 1, file);
+
+// Read size (little-endian)
+unsigned int size;
+fread(&size, 4, 1, file);
+
+printf("Expected CRC: 0x%08X\n", crc);
+printf("Uncompressed size: %u bytes\n", size);
+
+fclose(file);
+```
+
+### Writing CRC to File
+
+```c
+unsigned int crc = get_crc(uncompressed_data, uncompressed_len);
+unsigned int size = uncompressed_len;
+
+// Write to file in little-endian format
+FILE* out = fopen("output.gz", "ab");
+
+// Write CRC-32
+fwrite(&crc, 4, 1, out);
+
+// Write size
+fwrite(&size, 4, 1, out);
+
+fclose(out);
+```
+
+## Header CRC (Optional)
+
+GZIP also supports an optional 16-bit CRC of the header (HCRC):
+
+- Enabled when F_HCRC flag (bit 1) is set in the flags byte
+- Computed over all header bytes from ID1 through the end of optional fields
+- Stored as 2 bytes (little-endian) immediately before compressed data
+- Uses the least significant 16 bits of the CRC-32 algorithm
+
+### Computing Header CRC
+
+```c
+// Compute CRC over header bytes
+unsigned char header[100];
+size_t header_len = 50;  // actual header length
+
+unsigned int full_crc = get_crc(header, header_len);
+unsigned short hcrc = (unsigned short)(full_crc & 0xFFFF);
+
+printf("Header CRC: 0x%04X\n", hcrc);
+```
+
+## CRC Validation
+
+### In parse_member()
+
+The `parse_member()` function should validate the CRC:
+
+```c
+int parse_member(FILE* file, gz_header_t* header) {
+    // ... parse header and read compressed data ...
+    
+    // Decompress data
+    char* decompressed = /* ... */;
+    size_t decompressed_len = header->full_size;
+    
+    // Compute CRC of decompressed data
+    unsigned int computed_crc = get_crc((unsigned char*)decompressed, 
+                                        decompressed_len);
+    
+    // Compare with stored CRC
+    if (computed_crc != header->crc) {
+        fprintf(stderr, "CRC mismatch\n");
+        free(decompressed);
+        return -1;
+    }
+    
+    return 0;
+}
+```
+
+### In inflate()
+
+The `inflate()` function should verify the CRC automatically:
+
+```c
+char* inflate(char* bytes, size_t comp_len) {
+    // ... parse header and decompress ...
+    
+    // Extract CRC from trailer
+    unsigned int expected_crc;
+    memcpy(&expected_crc, bytes + comp_len - 8, 4);
+    
+    // Compute actual CRC
+    unsigned int actual_crc = get_crc((unsigned char*)decompressed, 
+                                     decompressed_len);
+    
+    if (actual_crc != expected_crc) {
+        fprintf(stderr, "CRC verification failed\n");
+        free(decompressed);
+        return NULL;
+    }
+    
+    return decompressed;
+}
+```
+
+## Implementation Notes
+
+### Lookup Table
+
+Efficient CRC-32 implementations use a 256-entry lookup table:
+
+```c
+static unsigned int crc_table[256];
+static int table_initialized = 0;
+
+void init_crc_table(void) {
+    for (unsigned int i = 0; i < 256; i++) {
+        unsigned int crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            } else {
+                crc >>= 1;
+            }
+        }
+        crc_table[i] = crc;
+    }
+    table_initialized = 1;
+}
+```
+
+### CRC Computation Loop
+
+```c
+unsigned int get_crc(const unsigned char *buf, size_t len) {
+    if (!table_initialized) {
+        init_crc_table();
+    }
+    
+    unsigned int crc = 0xFFFFFFFF;
+    
+    for (size_t i = 0; i < len; i++) {
+        unsigned char index = (crc ^ buf[i]) & 0xFF;
+        crc = (crc >> 8) ^ crc_table[index];
+    }
+    
+    return crc ^ 0xFFFFFFFF;
+}
+```
+
+## Error Detection Capabilities
+
+CRC-32 can reliably detect:
+
+- All single-bit errors
+- All double-bit errors
+- All burst errors up to 32 bits
+- Most larger errors (>99.99% detection rate)
+
+However, CRC is **not** a cryptographic hash:
+
+- It does not protect against intentional tampering
+- It is not collision-resistant
+- Use SHA-256 or similar for security applications
+
+## Byte Order Considerations
+
+### Little-Endian Storage
+
+GZIP stores the CRC-32 in little-endian byte order:
+
+```c
+// CRC value: 0x12345678
+// Stored in file as: 78 56 34 12
+```
+
+### Reading Multi-Byte Values
+
+```c
+// Read 4-byte little-endian value
+unsigned int read_le32(FILE* file) {
+    unsigned char bytes[4];
+    fread(bytes, 1, 4, file);
+    return (unsigned int)bytes[0] |
+           ((unsigned int)bytes[1] << 8) |
+           ((unsigned int)bytes[2] << 16) |
+           ((unsigned int)bytes[3] << 24);
+}
+```
+
+### Writing Multi-Byte Values
+
+```c
+// Write 4-byte little-endian value
+void write_le32(FILE* file, unsigned int value) {
+    unsigned char bytes[4];
+    bytes[0] = value & 0xFF;
+    bytes[1] = (value >> 8) & 0xFF;
+    bytes[2] = (value >> 16) & 0xFF;
+    bytes[3] = (value >> 24) & 0xFF;
+    fwrite(bytes, 1, 4, file);
+}
+```
+
+## See Also
+
+- [DEFLATE/INFLATE API](/zlib/api/deflate-inflate) - High-level compression functions
+- RFC 1952 - GZIP file format specification
+- RFC 1951 - DEFLATE compressed data format

@@ -1,0 +1,261 @@
+---
+title: "Requirements and Deliverables"
+description: "Assignment requirements, constraints, and deliverables for the ZLIB homework"
+---
+
+## Assignment Requirements
+
+### Due Date
+
+**Sunday, March 18th @ 11:59 PM**
+
+### Submission Method
+
+This assignment uses Codegrade for submission and grading. Every `git push` triggers basic functionality tests.
+
+<Warning>
+The Codegrade tests you see during development are **NOT** the final grading tests. The real test cases run after the submission deadline. Write your own comprehensive tests!
+</Warning>
+
+## Code Structure Requirements
+
+### Main Function Restriction
+
+<Warning>
+The `main.c` file **MUST ONLY** contain:
+- `#include` directives
+- Local `#define` statements  
+- The `main` function
+
+All other functions must be in separate `.c` files in the `src` directory.
+</Warning>
+
+This restriction exists because the assignment uses the Criterion testing library, which requires this specific structure.
+
+### File Organization
+
+You may:
+- Add as many `.c` files in the `src` directory as needed
+- Declare as many headers as needed
+
+<Note>
+Some header and `.c` files contain comments stating they should not be modified. **DO NOT modify these files** - they will be replaced with original versions during grading.
+</Note>
+
+## Library and Function Restrictions
+
+### Allowed Libraries
+
+You **MAY** use:
+- `glibc` (GNU standard C library), including:
+  - Dynamic memory allocation: `malloc`, `calloc`, `free`
+  - Standard I/O library: `fread`, `fwrite`, `fopen`, `fclose`, etc.
+  - String functions: `strcmp`, `strlen`, etc.
+  - Other standard C functions
+
+### Prohibited Libraries
+
+<Warning>
+You **MUST NOT** use:
+- `zlib` library
+- Any other compression/decompression library
+- Binary libraries other than `glibc`
+
+Submitting code that uses prohibited libraries will result in:
+- A zero for this assignment
+- Potential academic dishonesty charges
+</Warning>
+
+## Academic Integrity Requirements
+
+### Original Work
+
+For all assignments in this course:
+- You must write your own code
+- You may not submit source code you did not write yourself
+- Exception: Code distributed as part of the base repository
+- Exception: Code for which explicit written permission has been given
+
+<Warning>
+Submitting code that is not your original work will result in academic dishonesty charges.
+</Warning>
+
+## Implementation Requirements
+
+### Part 1: Command-Line Interface
+
+Implement a command-line utility that:
+- Opens a file specified by arguments
+- Processes operations based on command-line flags
+- Outputs results to a file or standard output
+- Exits with `EXIT_SUCCESS` (0) on success
+- Exits with `EXIT_FAILURE` (1) on error
+
+See the [CLI Arguments](/zlib/cli-arguments) page for detailed specifications.
+
+### Part 2: LZ77 Compression
+
+Implement in `lz.c`:
+- `lz_compress_tokens()` - Compress data into LZ77 tokens
+- LZ77 decompression logic (within `huffman_decode`)
+- Helper function `find_match()` for finding repeated sequences
+
+Requirements:
+- Find longest matching substring within 32,768 previous bytes
+- Minimum match length: 3 bytes
+- Maximum match length: 258 bytes
+- Maximum distance: 32,768 bytes
+- Return `NULL` on invalid data
+
+See the [LZ77 Implementation](/zlib/lz77-implementation) page for details.
+
+### Part 3: Huffman Coding
+
+Implement in `huff.c`:
+- `huffman_encode_tokens()` - Encode LZ77 tokens with Huffman coding
+- `huffman_decode()` - Decode Huffman-encoded data
+- Support for both static and dynamic Huffman codes
+- Helper functions for tree construction and code generation
+
+Requirements:
+- Support fixed Huffman codes (predefined)
+- Support dynamic Huffman codes (tree in data)
+- Perform LZ77 decoding within `huffman_decode()`
+- Return `NULL` on invalid data
+
+See the [Huffman Implementation](/zlib/huffman-implementation) page for details.
+
+### Part 4: GZIP File Format
+
+Implement in `zlib.c`:
+- `parse_member()` - Parse GZIP member headers
+- `deflate()` - Compress data using DEFLATE algorithm
+- `inflate()` - Decompress data using INFLATE algorithm
+- `skip_gz_header_to_compressed_data()` - Navigate to compressed data
+
+Requirements:
+- Parse all GZIP header fields correctly
+- Handle optional fields (extra, name, comment, HCRC)
+- Support multiple block types (uncompressed, fixed, dynamic)
+- Handle multi-byte integers in little-endian format
+- Compute and verify CRC checksums
+
+See the [GZIP Format](/zlib/gzip-format), [DEFLATE](/zlib/deflate), and [INFLATE](/zlib/inflate) pages for details.
+
+## Output Format Requirements
+
+<Warning>
+Your program's output must **EXACTLY** match the specifications. Even minor formatting differences will significantly impact your grade.
+</Warning>
+
+### Member Summary Format
+
+```
+Member Summary for <file>:
+  Member <label>: Compression Method: <cm>, Last Modified: <mtime>, OS: <os>, Extra: <extra_len>, [Comment: <comment>, ]Size: <size>, CRC: <valid|invalid>
+```
+
+The `PRINT_MEMBER_LINE` macro in `global.h` ensures correct formatting.
+
+### Error Message Format
+
+Use the provided macros in `global.h`:
+- `PRINT_ERROR_BAD_HEADER()`
+- `PRINT_ERROR_OPEN_FILE(filename)`
+- `PRINT_ERROR_MISSING_I_FLAG()`
+- `PRINT_ERROR_REQUIRE_ONE_OF_MCD()`
+- `PRINT_ERROR_MISSING_O_FLAG()`
+
+All error messages go to `stderr`.
+
+### Debug Output
+
+Use the `debug` macro from `debug.h` for debugging messages. Debug output is only shown when compiled with `make debug`.
+
+<Note>
+In production mode (compiled with `make`), no debug output should appear.
+</Note>
+
+## Block Size Requirements
+
+### Compression
+
+For consistency during testing:
+- Compressed blocks should hold **at most 65,535 bytes**
+- This is the same restriction as uncompressed blocks
+- The DEFLATE spec allows the compressor to determine block boundaries
+
+### Decompression
+
+<Warning>
+Your decompression code **CANNOT** assume:
+- All compressed blocks hold exactly 65,535 bytes
+- All blocks are limited to 65,535 bytes when decompressed
+
+Your code must handle variable-length blocks correctly.
+</Warning>
+
+## Error Handling Requirements
+
+Your functions must return `NULL` or error codes when encountering:
+
+- NULL pointers passed as arguments
+- Invalid compression data (illegal distance codes, etc.)
+- Malformed GZIP headers
+- Invalid block types (BTYPE = 11)
+- Distance values of 30 or 31 in LZ77 data
+- File I/O errors
+- Memory allocation failures
+
+## Memory Management Requirements
+
+- Use `malloc` or `calloc` to allocate memory
+- Always check allocation return values
+- Free all allocated memory when no longer needed
+- Caller is responsible for freeing returned buffers
+- Avoid memory leaks
+
+<Note>
+Functions like `deflate()`, `inflate()`, and `huffman_decode()` return malloc'd buffers. The caller must free these buffers.
+</Note>
+
+## Data Structure Requirements
+
+Use the provided data structures:
+
+- `lz_token_t` - LZ77 compression tokens
+- `gz_header_t` - GZIP member headers
+- `huff_node_t` - Huffman tree nodes
+
+See header files in `include/` for complete definitions.
+
+## Testing Requirements
+
+<Warning>
+You **MUST** write your own test cases beyond the provided examples. The grading tests are different from the development tests.
+</Warning>
+
+Test your implementation with:
+- Valid GZIP files
+- Files with different compression methods
+- Files with optional header fields
+- Edge cases (empty files, single bytes, maximum distances, etc.)
+- Invalid data (corrupt headers, invalid block types, etc.)
+
+## Deliverables
+
+Submit via git push to your Codegrade repository:
+
+1. All source files in `src/` directory
+2. Any additional header files you created
+3. Working Makefile (do not modify unless necessary)
+4. Code that compiles without errors or warnings
+5. Code that passes basic Codegrade tests
+
+<Note>
+Do not submit:
+- Compiled binaries
+- Object files (.o)
+- Test data files (unless explicitly instructed)
+- Your `.git` directory is automatically excluded
+</Note>

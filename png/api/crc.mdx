@@ -1,0 +1,171 @@
+---
+title: 'png_crc.h'
+description: 'CRC-32 checksum computation for PNG chunk validation'
+---
+
+## Overview
+
+The `png_crc.h` module provides functions for computing CRC-32 checksums used in PNG chunk validation. PNG uses CRC-32 with the polynomial `0xEDB88320` to ensure data integrity. The CRC is computed over the chunk type name (4 bytes) concatenated with the chunk data.
+
+## Functions
+
+### png_crc
+
+```c
+uint32_t png_crc(const uint8_t *buf, size_t len);
+```
+
+Computes the CRC-32 checksum over a buffer of bytes using the PNG-specific polynomial. This function uses a lookup table for efficient computation. The lookup table is computed once on first use and reused for subsequent calls.
+
+<ParamField path="buf" type="const uint8_t *" required>
+  Pointer to the buffer containing the data to compute CRC over
+</ParamField>
+
+<ParamField path="len" type="size_t" required>
+  Number of bytes in the buffer
+</ParamField>
+
+<ResponseField name="return" type="uint32_t">
+  The 32-bit CRC value
+</ResponseField>
+
+## Example Usage
+
+### Validating a PNG Chunk
+
+```c
+png_chunk_t chunk;
+// ... read chunk from file ...
+
+// Combine chunk type and data into a single buffer for CRC calculation
+size_t crc_len = 4 + chunk.length;  // 4 bytes for type + data length
+uint8_t *crc_buf = malloc(crc_len);
+
+if (crc_buf != NULL) {
+    // Copy type (4 bytes)
+    memcpy(crc_buf, chunk.type, 4);
+    // Copy data
+    memcpy(crc_buf + 4, chunk.data, chunk.length);
+    
+    // Compute CRC
+    uint32_t computed_crc = png_crc(crc_buf, crc_len);
+    
+    // Compare with stored CRC
+    if (computed_crc == chunk.crc) {
+        printf("CRC valid\\n");
+    } else {
+        printf("CRC mismatch! Expected: 0x%08X, Got: 0x%08X\\n", 
+               chunk.crc, computed_crc);
+    }
+    
+    free(crc_buf);
+}
+```
+
+### Computing CRC for a New Chunk
+
+```c
+// Create a new IHDR chunk
+uint8_t ihdr_data[13] = {
+    0x00, 0x00, 0x01, 0x40,  // Width: 320
+    0x00, 0x00, 0x01, 0x40,  // Height: 320
+    0x08,                     // Bit depth: 8
+    0x03,                     // Color type: Palette
+    0x00,                     // Compression: 0
+    0x00,                     // Filter: 0
+    0x00                      // Interlace: None
+};
+
+// Prepare buffer with type + data
+uint8_t crc_buf[17];  // 4 (type) + 13 (data)
+memcpy(crc_buf, "IHDR", 4);
+memcpy(crc_buf + 4, ihdr_data, 13);
+
+// Compute CRC
+uint32_t crc = png_crc(crc_buf, 17);
+printf("IHDR CRC: 0x%08X\\n", crc);
+```
+
+## Algorithm Details
+
+The CRC-32 algorithm works as follows:
+
+### 1. Initialize Lookup Table
+
+Create a 256-entry table where each entry is computed by applying the CRC polynomial `0xEDB88320` to each possible byte value (0-255):
+
+```c
+static uint32_t crc_table[256];
+static int table_computed = 0;
+
+static void make_crc_table(void) {
+    for (int n = 0; n < 256; n++) {
+        uint32_t c = (uint32_t)n;
+        for (int k = 0; k < 8; k++) {
+            if (c & 1) {
+                c = 0xEDB88320 ^ (c >> 1);
+            } else {
+                c = c >> 1;
+            }
+        }
+        crc_table[n] = c;
+    }
+    table_computed = 1;
+}
+```
+
+### 2. Process Each Byte
+
+Initialize CRC register to `0xFFFFFFFF` and process each byte:
+
+```c
+uint32_t png_crc(const uint8_t *buf, size_t len) {
+    if (!table_computed) {
+        make_crc_table();
+    }
+    
+    uint32_t c = 0xFFFFFFFF;
+    
+    for (size_t n = 0; n < len; n++) {
+        c = crc_table[(c ^ buf[n]) & 0xFF] ^ (c >> 8);
+    }
+    
+    return c ^ 0xFFFFFFFF;
+}
+```
+
+### 3. Finalize
+
+XOR the final CRC value with `0xFFFFFFFF` to get the result.
+
+## PNG Specification
+
+From the PNG specification:
+
+> The CRC checksum is computed over the chunk type and chunk data, but not the chunk length or the CRC itself. The CRC is calculated using the polynomial `0xEDB88320`.
+
+## Notes
+
+- The CRC is computed over **both** the chunk type (4 bytes) and chunk data (variable length)
+- The chunk length and CRC fields themselves are **not** included in the CRC calculation
+- The lookup table is initialized once and reused for all subsequent calls (static storage)
+- All multi-byte CRC values in PNG files are stored in big-endian format
+- Sample implementation is provided in the PNG specification Appendix
+
+## Error Detection
+
+CRC-32 provides strong error detection capabilities:
+
+- Detects all single-bit errors
+- Detects all double-bit errors
+- Detects any odd number of bit errors
+- Detects any burst error of 32 bits or less
+- Detects most longer burst errors with high probability
+
+## Performance
+
+The lookup table approach provides efficient CRC computation:
+
+- Table generation: One-time cost of 256 iterations
+- Per-byte cost: One table lookup, two XOR operations, one shift
+- Typical performance: Several hundred MB/s on modern CPUs

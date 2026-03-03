@@ -1,0 +1,275 @@
+---
+title: 'png_steg.h'
+description: 'PNG steganography functions for encoding and extracting hidden messages'
+---
+
+## Overview
+
+The `png_steg.h` module provides steganography functionality for hiding and extracting secret messages in PNG images. Steganography is the practice of hiding information within other data in a way that is not easily detectable.
+
+This implementation supports two different encoding methods depending on the image's color type:
+
+- **Non-palette images** (color types 0, 2, 4, 6): Uses the least significant bit (LSB) of the first channel of each pixel
+- **Palette images** (color type 3): Uses identical-color pair index swapping for visually undetectable encoding
+
+## Functions
+
+### png_encode_lsb
+
+```c
+int png_encode_lsb(const char *input_path, const char *output_path, const char *secret);
+```
+
+Encodes a secret string into the least significant bits of PNG image data. The function hides the message (including null terminator) in the image pixels, creating an output image that is visually identical or nearly identical to the input.
+
+<ParamField path="input_path" type="const char *" required>
+  Path to the input PNG file
+</ParamField>
+
+<ParamField path="output_path" type="const char *" required>
+  Path where the output PNG file with hidden message will be written
+</ParamField>
+
+<ParamField path="secret" type="const char *" required>
+  The secret message to hide (null-terminated string)
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns `0` on success, `-1` on error (invalid parameters, file I/O errors, message too long, palette manipulation failure, etc.)
+</ResponseField>
+
+#### Example
+
+```c
+const char *secret = "This is a secret message!";
+
+if (png_encode_lsb("input.png", "output.png", secret) == 0) {
+    printf("Message encoded successfully\\n");
+} else {
+    fprintf(stderr, "Failed to encode message\\n");
+}
+```
+
+#### Encoding Algorithm
+
+**High-Level Process:**
+
+1. Open and validate the input PNG file
+2. Read and parse the IHDR chunk to determine image properties (width, height, color type)
+3. For palette images (color type 3):
+   - Extract the PLTE chunk
+   - Build a table of identical-color pairs in the palette
+   - If no pairs exist, append duplicate colors to create pairs (up to 256 entries)
+   - Create mapping: `pair[i] = j` if colors at indices i and j are identical
+4. Decompress all IDAT chunks into a single buffer
+5. Calculate encoding capacity: `width × height` pixels
+6. Check if message fits: `(strlen(secret) + 1) * 8` bits ≤ capacity
+7. Encode the message:
+   - For non-palette images: modify LSB of first channel of each pixel
+   - For palette images: swap between identical-color pair indices
+8. Re-compress the modified image data using PNG-compatible zlib settings
+9. Write output PNG, preserving all chunks except IDAT (replaced) and PLTE (if modified)
+
+**Non-Palette Image Encoding:**
+
+```c
+// For each bit in the message
+for (int i = 0; i < message_bits; i++) {
+    int bit = (secret[i / 8] >> (i % 8)) & 1;
+    
+    // Modify LSB of first channel
+    // Skip filter bytes (first byte of each scanline)
+    int pixel_index = /* calculate based on scanline structure */;
+    data[pixel_index] = (data[pixel_index] & 0xFE) | bit;
+}
+```
+
+**Palette Image Encoding:**
+
+```c
+// For each bit in the message
+for (int i = 0; i < message_bits; i++) {
+    int bit = (secret[i / 8] >> (i % 8)) & 1;
+    
+    uint8_t index = data[pixel_index];
+    if (pair[index] != 255) {  // Has a pair
+        if (bit == 0) {
+            data[pixel_index] = min(index, pair[index]);
+        } else {
+            data[pixel_index] = max(index, pair[index]);
+        }
+    }
+}
+```
+
+#### Technical Details
+
+- Only supports 8-bit images (`bit_depth == 8`)
+- Message capacity: 1 bit per pixel
+- Filter bytes (first byte of each scanline) are **never modified**
+- Uses `util_deflate_data_png()` for PNG-compatible compression (windowBits=15)
+- Preserves all ancillary chunks from the input file
+- For palette images, output is visually identical (uses identical colors)
+- For non-palette images, changes are typically imperceptible (single LSB modification)
+
+#### Error Conditions
+
+- Returns `-1` if any parameter is NULL
+- Returns `-1` if image is not 8-bit
+- Returns `-1` if message is too long for the image capacity
+- Returns `-1` on file I/O errors
+- Returns `-1` if palette manipulation fails (e.g., palette exceeds 256 entries)
+
+---
+
+### png_extract_lsb
+
+```c
+int png_extract_lsb(const char *input_path, char *out, size_t max_len);
+```
+
+Extracts a hidden message from PNG image data. The function reads the least significant bits from the image pixels and reconstructs the hidden message.
+
+<ParamField path="input_path" type="const char *" required>
+  Path to the PNG file containing the hidden message
+</ParamField>
+
+<ParamField path="out" type="char *" required>
+  Output buffer where the extracted string will be written (must be at least `max_len` bytes)
+</ParamField>
+
+<ParamField path="max_len" type="size_t" required>
+  Maximum length of the output buffer (reserves space for null terminator)
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns the length of the extracted string on success (excluding null terminator), `-1` on error
+</ResponseField>
+
+#### Example
+
+```c
+char message[256];
+
+int len = png_extract_lsb("output.png", message, sizeof(message));
+if (len >= 0) {
+    printf("Extracted message (%d chars): %s\\n", len, message);
+} else {
+    fprintf(stderr, "Failed to extract message\\n");
+}
+```
+
+#### Extraction Algorithm
+
+**High-Level Process:**
+
+1. Open and validate the input PNG file
+2. Read and parse the IHDR chunk
+3. For palette images: extract PLTE and build identical-color pair table
+4. Decompress all IDAT chunks
+5. Extract bits from the image data:
+   - For non-palette images: read LSB from first channel of each pixel
+   - For palette images: determine bit by checking if index is "higher" of a pair
+6. Reconstruct bytes from bits (8 bits per byte)
+7. Stop extraction when null terminator (all zero bits) is found
+8. Return the length of the extracted string
+
+**Non-Palette Image Extraction:**
+
+```c
+for (int i = 0; i < max_bits; i++) {
+    int pixel_index = /* calculate based on scanline structure */;
+    int bit = data[pixel_index] & 1;  // Extract LSB
+    
+    out[i / 8] |= (bit << (i % 8));
+    
+    // Check for null terminator
+    if ((i % 8 == 7) && (out[i / 8] == 0)) {
+        break;
+    }
+}
+```
+
+**Palette Image Extraction:**
+
+```c
+for (int i = 0; i < max_bits; i++) {
+    uint8_t index = data[pixel_index];
+    int bit = 0;
+    
+    if (pair[index] != 255) {  // Has a pair
+        bit = (index > pair[index]) ? 1 : 0;
+    }
+    
+    out[i / 8] |= (bit << (i % 8));
+    
+    // Check for null terminator
+    if ((i % 8 == 7) && (out[i / 8] == 0)) {
+        break;
+    }
+}
+```
+
+#### Technical Details
+
+- Only supports 8-bit images
+- Extracts one bit per pixel
+- For palette images: skips pixels whose index doesn't have a pair
+- Filter bytes are **never read** during extraction
+- Output buffer must be at least `max_len` bytes
+- Returns the number of characters extracted (excluding null terminator)
+
+#### Error Conditions
+
+- Returns `-1` if any parameter is NULL or `max_len == 0`
+- Returns `-1` if image is not 8-bit
+- Returns `-1` on file I/O errors
+
+## Palette Steganography Details
+
+### Identical-Color Pair Method
+
+For palette images (color type 3), simple LSB modification would cause visible artifacts. The solution is to use **identical-color pairs** in the palette:
+
+1. **Build Pair Table**: Find all pairs of palette indices that have identical RGB values
+2. **Expand Palette**: If insufficient pairs exist, append duplicate colors (up to 256 max)
+3. **Index Mapping**: Create mapping where `pair[i] = j` if indices i and j are identical
+4. **Encoding**: Swap between lower/higher index to encode 0/1 bits
+5. **Decoding**: Check if index is higher/lower of pair to extract bit
+
+### Why This Works
+
+- Identical RGB values are visually indistinguishable
+- Swapping indices between identical colors produces no visible change
+- PNG specification allows duplicate colors in PLTE chunk
+- Can encode up to 1 bit per pixel with zero visual artifacts
+
+## Message Capacity
+
+The maximum message capacity depends on the image size:
+
+```
+Capacity (bits) = width × height
+Capacity (bytes) = (width × height) / 8
+```
+
+For example:
+- 320×320 image: 102,400 bits = 12,800 bytes (12.5 KB)
+- 640×480 image: 307,200 bits = 38,400 bytes (37.5 KB)
+- 1920×1080 image: 2,073,600 bits = 259,200 bytes (253 KB)
+
+## Security Considerations
+
+- LSB steganography is detectable with statistical analysis
+- This implementation prioritizes simplicity over security
+- For high-security applications, use encryption before embedding
+- Palette method is more robust against visual detection
+- Non-palette method may show minor artifacts under close inspection
+
+## Limitations
+
+- Only supports 8-bit images (most common PNG format)
+- Cannot encode in images with insufficient capacity
+- Palette images limited to 256 color entries (PNG specification)
+- No encryption (messages are hidden but not encrypted)
+- No error correction (corrupted bits result in corrupted message)

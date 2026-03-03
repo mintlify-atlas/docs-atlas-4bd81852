@@ -1,0 +1,318 @@
+---
+title: Setup Instructions
+description: Get the CSE320 template repository from CodeGrade and set up your development environment
+---
+
+# Setting Up Your Environment
+
+This guide walks you through getting the CSE320 template repository from CodeGrade and setting up your development environment.
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- Access to CodeGrade for CSE320
+- A Linux development environment (Linux Mint recommended for official course environment)
+- GCC compiler and build tools installed
+- Git version control system
+
+<Note>
+  The official course environment is Linux Mint. While you can develop on other systems, your code must compile and run correctly in the Linux Mint environment used for grading.
+</Note>
+
+## Getting the Template from CodeGrade
+
+<Steps>
+  <Step title="Access CodeGrade">
+    Log into CodeGrade through your course portal. You should see the CSE320 course with available assignments.
+  </Step>
+
+  <Step title="Create Your Repository">
+    When you access an assignment in CodeGrade, it will create a personal git repository for you based on the template. This repository is linked to CodeGrade for automated testing.
+    
+    You'll receive a git repository URL that looks like:
+    ```
+    https://codegrade.com/git/cse320/hw1-yourusername
+    ```
+  </Step>
+
+  <Step title="Clone the Repository">
+    Clone your repository to your local development machine:
+    
+    ```bash
+    git clone https://codegrade.com/git/cse320/hw1-yourusername
+    cd hw1-yourusername
+    ```
+    
+    Replace the URL with your actual repository URL from CodeGrade.
+  </Step>
+
+  <Step title="Verify the Structure">
+    After cloning, verify that the directory structure is correct:
+    
+    <CodeGroup>
+    ```bash PNG Homework
+    ls -la PNG_HW/
+    # Should show:
+    # include/  src/  tests/  Makefile  README.md  .gitignore
+    ```
+    
+    ```bash ZLIB Homework
+    ls -la ZLIB_HW/
+    # Should show:
+    # include/  src/  tests/  Makefile  README.md  .gitignore
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Installing Required Tools
+
+Make sure you have the necessary development tools installed.
+
+### On Linux Mint / Ubuntu / Debian
+
+```bash
+# Update package lists
+sudo apt update
+
+# Install build essentials (GCC, make, etc.)
+sudo apt install build-essential
+
+# Install zlib development library (needed for PNG homework)
+sudo apt install zlib1g-dev
+
+# Install Criterion testing framework
+sudo apt install libcriterion-dev
+
+# Install debugging tools
+sudo apt install gdb valgrind
+
+# Install hex dump utility (usually pre-installed)
+which hd || sudo apt install bsdmainutils
+```
+
+### Verify Installation
+
+```bash
+# Check GCC version (should be 7.0 or higher)
+gcc --version
+
+# Check make
+make --version
+
+# Check Criterion
+pkg-config --modversion criterion
+
+# Check gdb
+gdb --version
+```
+
+## Understanding CodeGrade Integration
+
+<Warning>
+  CodeGrade automatically runs tests every time you push to your repository. However, these are NOT the final grading tests - they're provided to help you verify basic functionality and ensure your code compiles.
+</Warning>
+
+### How CodeGrade Testing Works
+
+1. **Automatic Testing**: Every `git push` triggers CodeGrade to:
+   - Clone your repository
+   - Compile your code
+   - Run the provided test cases
+   - Display results in your CodeGrade dashboard
+
+2. **Continuous Feedback**: You can push as many times as you want before the deadline. Use this to verify your code compiles and passes basic tests.
+
+3. **Final Grading**: After the submission deadline, more comprehensive test cases are run that are NOT visible to you during development.
+
+### Recommended Workflow
+
+```bash
+# 1. Make changes to your code
+vim src/png_reader.c
+
+# 2. Test locally first
+make clean all
+bin/png_tests --verbose=0
+
+# 3. Commit your changes
+git add src/png_reader.c
+git commit -m "Implement png_read_chunk function"
+
+# 4. Push to CodeGrade
+git push origin main
+
+# 5. Check CodeGrade dashboard for results
+```
+
+## Reading the Assignment Specifications
+
+Each homework directory contains a comprehensive README.md file with:
+
+- **Complete specifications** for all functions
+- **Data structure definitions**
+- **Algorithm explanations**
+- **Example hex dumps** and walkthroughs
+- **Output format requirements**
+- **Allowed and disallowed libraries**
+
+<Steps>
+  <Step title="Read the Entire README">
+    Before writing any code, read the complete README.md file:
+    
+    ```bash
+    # For PNG homework
+    less PNG_HW/README.md
+    
+    # For ZLIB homework
+    less ZLIB_HW/README.md
+    ```
+  </Step>
+
+  <Step title="Study the References">
+    The READMEs link to external specifications:
+    
+    - **PNG Homework**: [PNG Specification](https://www.libpng.org/pub/png/spec/1.2/PNG-Contents.html)
+    - **ZLIB Homework**: [RFC 1951 (DEFLATE)](http://tools.ietf.org/html/rfc1951), [RFC 1952 (GZIP)](http://tools.ietf.org/html/rfc1952)
+    - **C Programming**: [Beej's Guide to C](https://beej.us/guide/bgc/html/)
+  </Step>
+
+  <Step title="Examine Test Data">
+    Look at the provided test files to understand what your program needs to handle:
+    
+    ```bash
+    # PNG test files
+    ls -lh PNG_HW/tests/data/
+    
+    # ZLIB test files
+    ls -lh ZLIB_HW/tests/data/
+    ```
+  </Step>
+
+  <Step title="Study Existing Code">
+    The template includes starter code and some complete functions:
+    
+    ```bash
+    # List all header files to understand the API
+    ls PNG_HW/include/
+    
+    # Read the global definitions
+    cat PNG_HW/include/global.h
+    ```
+  </Step>
+</Steps>
+
+## Important Files to NOT Modify
+
+<Warning>
+  Some files contain "DO NOT MODIFY" instructions at the beginning. These files will be replaced with original versions during grading. Common examples include:
+  
+  - `include/debug.h`
+  - `include/global.h`
+  - Some test files
+  
+  Always check file headers for modification restrictions.
+</Warning>
+
+## Git Best Practices
+
+### What to Commit
+
+```bash
+# Commit source code and headers you create/modify
+git add src/*.c
+git add include/*.h
+
+# Commit your own test files if you write them
+git add tests/my_custom_test.c
+```
+
+### What NOT to Commit
+
+The `.gitignore` file is pre-configured to exclude:
+
+- Compiled binaries (`bin/`)
+- Object files (`build/`)
+- Editor temporary files
+- Core dumps
+
+```bash
+# These should never be committed (already in .gitignore)
+# bin/png
+# bin/png_tests
+# build/*.o
+# *.swp
+```
+
+### Commit Message Guidelines
+
+Write clear, descriptive commit messages:
+
+```bash
+# Good commit messages
+git commit -m "Implement png_read_chunk with CRC validation"
+git commit -m "Fix memory leak in png_parse_plte"
+git commit -m "Add error handling for invalid chunk lengths"
+
+# Poor commit messages (avoid these)
+git commit -m "update"
+git commit -m "fix bug"
+git commit -m "wip"
+```
+
+## Next Steps
+
+Now that your environment is set up:
+
+<CardGroup cols={2}>
+  <Card title="Build the Project" icon="hammer" href="/building">
+    Learn how to compile and build the assignments
+  </Card>
+  
+  <Card title="Run Tests" icon="flask" href="/testing">
+    Understand how to run and interpret test results
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### "Criterion not found" Error
+
+If you get linking errors about Criterion:
+
+```bash
+# Install Criterion development package
+sudo apt install libcriterion-dev
+
+# Or build from source if not available in your package manager
+```
+
+### "zlib not found" Error (PNG Homework)
+
+```bash
+# Install zlib development headers
+sudo apt install zlib1g-dev
+```
+
+### Permission Denied on Git Push
+
+Make sure you've configured git credentials:
+
+```bash
+# Configure git identity
+git config --global user.name "Your Name"
+git config --global user.email "your.email@university.edu"
+
+# Use credential helper to cache password
+git config --global credential.helper cache
+```
+
+### CodeGrade Not Running Tests
+
+If CodeGrade doesn't run tests after pushing:
+
+1. Check that you pushed to the correct branch (usually `main` or `master`)
+2. Verify your code compiles without errors
+3. Check the CodeGrade dashboard for error messages
+4. Ensure you haven't modified "DO NOT MODIFY" files in incompatible ways

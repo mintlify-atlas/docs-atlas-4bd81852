@@ -1,0 +1,133 @@
+---
+title: CSE320 Template Documentation
+description: Educational template repository for CSE320 Systems Fundamentals II - PNG manipulation and ZLIB compression in C
+---
+
+# CSE320 Template Repository
+
+Welcome to the CSE320 (Systems Fundamentals II) template repository. This educational project contains two challenging C programming assignments designed to teach systems programming concepts through real-world file format manipulation.
+
+## What's Inside
+
+This repository contains two comprehensive homework assignments:
+
+### PNG Image Manipulation (Homework 1)
+Implement a complete PNG file parser and manipulator that can:
+- Read and validate PNG file structures
+- Parse chunks (IHDR, PLTE, IDAT, IEND)
+- Perform steganography (hide messages in images)
+- Overlay images with palette merging
+- Validate CRC checksums
+
+### ZLIB Compression (Homework 2)
+Build a gzip compression/decompression utility from scratch:
+- Implement LZ77 compression algorithm
+- Build Huffman encoding/decoding trees
+- Handle dynamic and fixed Huffman blocks
+- Parse gzip file format
+- Compress and decompress files
+
+## Key Learning Objectives
+
+<CardGroup cols={2}>
+  <Card title="File Format Parsing" icon="file-code">
+    Learn to parse and manipulate binary file formats including PNG and gzip, understanding endianness, chunk structures, and headers.
+  </Card>
+  
+  <Card title="Memory Management" icon="memory">
+    Master dynamic memory allocation with malloc/calloc/free, avoiding memory leaks, and proper buffer management in C.
+  </Card>
+  
+  <Card title="Bitwise Operations" icon="binary">
+    Work with bit-level operations for compression algorithms, CRC calculations, and flag parsing.
+  </Card>
+  
+  <Card title="Algorithms & Data Structures" icon="diagram-project">
+    Implement compression algorithms (LZ77, Huffman coding), binary trees, and sliding window techniques.
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+- **Language**: C (GNU C11 standard)
+- **Build System**: GNU Make with automated dependency tracking
+- **Testing Framework**: Criterion for unit testing
+- **Libraries**: glibc (standard C library), zlib (PNG homework only)
+- **Tools**: GCC compiler, GDB debugger, Valgrind for memory checking
+
+## Course Information
+
+**Course**: CSE 320 - Systems Fundamentals II  
+**Instructor**: Professor Dan Benz  
+**Semester**: Spring 2026  
+**Submission**: CodeGrade with automated testing
+
+<Note>
+  The tests provided in this template are for basic functionality checking only. The actual grading tests run after submission deadlines are more comprehensive. You are strongly encouraged to write additional tests.
+</Note>
+
+## Quick Start Guide
+
+<CardGroup cols={2}>
+  <Card title="Setup" icon="download" href="/setup">
+    Get the template from CodeGrade and set up your development environment
+  </Card>
+  
+  <Card title="Building" icon="hammer" href="/building">
+    Learn how to compile the projects using make commands
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/testing">
+    Run Criterion tests to validate your implementation
+  </Card>
+  
+  <Card title="Debugging" icon="bug" href="/debugging">
+    Debug your C programs using GDB, Valgrind, and other tools
+  </Card>
+</CardGroup>
+
+## Project Structure
+
+Both homework assignments follow a consistent directory structure:
+
+```
+PNG_HW/ or ZLIB_HW/
+├── Makefile          # Build configuration
+├── README.md         # Detailed assignment specifications
+├── include/          # Header files (.h)
+│   ├── debug.h
+│   ├── global.h
+│   └── ...
+├── src/              # Source files (.c)
+│   ├── main.c
+│   └── ...
+├── tests/            # Criterion test files
+│   ├── data/         # Test data files
+│   └── test_*.c
+├── bin/              # Compiled executables (created by make)
+└── build/            # Object files (created by make)
+```
+
+## Assignment Restrictions
+
+<Warning>
+  **Important Constraints**: You must write your own code and may only use approved libraries (glibc for both assignments, zlib for PNG only). The main.c file must contain ONLY includes, defines, and the main function. Files marked "DO NOT MODIFY" must not be changed.
+</Warning>
+
+## Due Dates
+
+- **Homework 1 (PNG)**: Sunday, February 15th @ 11:59 PM
+- **Homework 2 (ZLIB)**: Sunday, March 18th @ 11:59 PM
+
+## Getting Help
+
+Check the course Piazza for updates, clarifications, and discussions. Both README files contain comprehensive specifications including:
+- Detailed algorithm explanations
+- Data structure definitions
+- Function prototypes and requirements
+- Output format specifications
+- Example hex dumps and walkthroughs
+
+<Note>
+  These are challenging projects. Start early, allocate regular time for experimentation with the data files, and don't expect to complete them in a single session.
+</Note>

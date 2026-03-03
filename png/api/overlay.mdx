@@ -1,0 +1,372 @@
+---
+title: 'png_overlay.h'
+description: 'PNG image overlay function for compositing images'
+---
+
+## Overview
+
+The `png_overlay.h` module provides functionality for pasting a smaller PNG image onto a larger PNG image at specified coordinates. The implementation handles all PNG color types, including special processing for palette-based images.
+
+## Functions
+
+### png_overlay_paste
+
+```c
+int png_overlay_paste(const char *large_path, const char *small_path,
+                     const char *output_path, uint32_t x_offset, uint32_t y_offset);
+```
+
+Overlays a smaller PNG image onto a larger PNG image at specified coordinates. The function replaces pixels in the larger image with pixels from the smaller image wherever the smaller image is pasted. No alpha blending is performed - pixels are replaced directly.
+
+<ParamField path="large_path" type="const char *" required>
+  Path to the larger (base) PNG file
+</ParamField>
+
+<ParamField path="small_path" type="const char *" required>
+  Path to the smaller (overlay) PNG file to paste
+</ParamField>
+
+<ParamField path="output_path" type="const char *" required>
+  Path where the output PNG file will be written
+</ParamField>
+
+<ParamField path="x_offset" type="uint32_t" required>
+  X coordinate where the small image will be pasted (0 = left edge)
+</ParamField>
+
+<ParamField path="y_offset" type="uint32_t" required>
+  Y coordinate where the small image will be pasted (0 = top edge)
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns `0` on success, `-1` on error (see error conditions)
+</ResponseField>
+
+## Example Usage
+
+### Basic Overlay
+
+```c
+// Paste logo.png onto background.png at position (100, 50)
+if (png_overlay_paste("background.png", "logo.png", "output.png", 100, 50) == 0) {
+    printf("Overlay completed successfully\\n");
+} else {
+    fprintf(stderr, "Overlay failed\\n");
+}
+```
+
+### Corner Placement
+
+```c
+// Top-left corner
+png_overlay_paste("large.png", "small.png", "topleft.png", 0, 0);
+
+// Top-right corner (requires knowing dimensions)
+png_overlay_paste("large.png", "small.png", "topright.png", 1600, 0);
+
+// Bottom-left corner
+png_overlay_paste("large.png", "small.png", "bottomleft.png", 0, 1080);
+```
+
+## Algorithm Overview
+
+The overlay algorithm performs the following steps:
+
+### 1. File Validation
+
+```c
+// Open both input files
+FILE *large_fp = png_open(large_path);
+FILE *small_fp = png_open(small_path);
+
+// Read IHDR from both
+png_ihdr_t large_ihdr, small_ihdr;
+png_extract_ihdr(large_fp, &large_ihdr);
+png_extract_ihdr(small_fp, &small_ihdr);
+
+// Validate compatibility
+if (large_ihdr.bit_depth != small_ihdr.bit_depth ||
+    large_ihdr.color_type != small_ihdr.color_type) {
+    // Error: incompatible images
+}
+```
+
+### 2. Palette Merging (Color Type 3)
+
+For palette images, merge the color palettes:
+
+```c
+// Extract palettes
+png_color_t *large_colors, *small_colors;
+size_t large_count, small_count;
+
+png_extract_plte(large_fp, &large_colors, &large_count);
+png_extract_plte(small_fp, &small_colors, &small_count);
+
+// Create merged palette
+png_color_t merged[256];
+memcpy(merged, large_colors, large_count * sizeof(png_color_t));
+int merged_count = large_count;
+
+// Add colors from small palette that don't exist in large
+uint8_t index_map[256];  // Maps small indices to merged indices
+for (int i = 0; i < small_count; i++) {
+    int found = -1;
+    // Search for matching color in merged palette
+    for (int j = 0; j < merged_count; j++) {
+        if (merged[j].r == small_colors[i].r &&
+            merged[j].g == small_colors[i].g &&
+            merged[j].b == small_colors[i].b) {
+            found = j;
+            break;
+        }
+    }
+    
+    if (found >= 0) {
+        index_map[i] = found;  // Use existing color
+    } else {
+        if (merged_count >= 256) {
+            // Error: palette full
+        }
+        merged[merged_count] = small_colors[i];
+        index_map[i] = merged_count;
+        merged_count++;
+    }
+}
+```
+
+### 3. Decompression and Unfiltering
+
+```c
+// Decompress IDAT chunks
+uint8_t *large_data = /* decompress all IDAT from large */;
+uint8_t *small_data = /* decompress all IDAT from small */;
+
+// Unfilter scanlines (handles filter types 0-4)
+for (uint32_t y = 0; y < height; y++) {
+    uint8_t filter_type = data[y * (scanline_size + 1)];
+    uint8_t *scanline = &data[y * (scanline_size + 1) + 1];
+    
+    switch (filter_type) {
+        case 0: /* None */ break;
+        case 1: /* Sub */ unfilter_sub(scanline, width, bpp); break;
+        case 2: /* Up */ unfilter_up(scanline, prev, width, bpp); break;
+        case 3: /* Average */ unfilter_average(scanline, prev, width, bpp); break;
+        case 4: /* Paeth */ unfilter_paeth(scanline, prev, width, bpp); break;
+    }
+}
+```
+
+### 4. Pixel Pasting
+
+```c
+// Calculate paste region (with clipping)
+uint32_t paste_x = x_offset;
+uint32_t paste_y = y_offset;
+uint32_t paste_w = min(small_width, large_width - x_offset);
+uint32_t paste_h = min(small_height, large_height - y_offset);
+
+// For palette images: remap indices first
+if (color_type == 3) {
+    for (uint32_t y = 0; y < small_height; y++) {
+        for (uint32_t x = 0; x < small_width; x++) {
+            uint8_t *pixel = /* get pixel at (x, y) */;
+            *pixel = index_map[*pixel];
+        }
+    }
+}
+
+// Paste pixels
+for (uint32_t y = 0; y < paste_h; y++) {
+    uint32_t src_y = y;
+    uint32_t dst_y = paste_y + y;
+    
+    for (uint32_t x = 0; x < paste_w; x++) {
+        uint32_t src_x = x;
+        uint32_t dst_x = paste_x + x;
+        
+        // Calculate byte offsets (skip filter bytes)
+        size_t src_offset = src_y * (small_scanline + 1) + 1 + src_x * bpp;
+        size_t dst_offset = dst_y * (large_scanline + 1) + 1 + dst_x * bpp;
+        
+        // Copy pixel data
+        memcpy(&large_data[dst_offset], &small_data[src_offset], bpp);
+    }
+}
+```
+
+### 5. Re-filtering and Compression
+
+```c
+// Set all filter bytes to type 0 (None)
+for (uint32_t y = 0; y < height; y++) {
+    large_data[y * (scanline_size + 1)] = 0;
+}
+
+// Compress with PNG-compatible zlib settings
+uint8_t *compressed;
+size_t compressed_size;
+util_deflate_data_png(large_data, data_size, &compressed, &compressed_size);
+```
+
+### 6. Output File Writing
+
+```c
+// Write PNG signature
+fwrite(png_signature, 1, 8, out_fp);
+
+// Write IHDR
+write_chunk(out_fp, "IHDR", ihdr_data, 13);
+
+// Write PLTE (if palette image, using merged palette)
+if (color_type == 3) {
+    write_chunk(out_fp, "PLTE", merged_palette, merged_count * 3);
+}
+
+// Write IDAT
+write_chunk(out_fp, "IDAT", compressed, compressed_size);
+
+// Write IEND
+write_chunk(out_fp, "IEND", NULL, 0);
+```
+
+## PNG Filter Types
+
+PNG uses filtering to improve compression. The overlay function must handle all five filter types:
+
+### Filter Type 0: None
+
+No filtering applied. Pixel values are stored as-is.
+
+```c
+void unfilter_none(uint8_t *scanline) {
+    // No operation needed
+}
+```
+
+### Filter Type 1: Sub
+
+Each byte is predicted using the byte to its left.
+
+```c
+void unfilter_sub(uint8_t *scanline, uint32_t width, int bpp) {
+    for (uint32_t x = bpp; x < width * bpp; x++) {
+        scanline[x] = (scanline[x] + scanline[x - bpp]) & 0xFF;
+    }
+}
+```
+
+### Filter Type 2: Up
+
+Each byte is predicted using the byte directly above it.
+
+```c
+void unfilter_up(uint8_t *scanline, uint8_t *prev, uint32_t width, int bpp) {
+    if (prev == NULL) return;  // First scanline
+    
+    for (uint32_t x = 0; x < width * bpp; x++) {
+        scanline[x] = (scanline[x] + prev[x]) & 0xFF;
+    }
+}
+```
+
+### Filter Type 3: Average
+
+Each byte is predicted as the average of left and above neighbors.
+
+```c
+void unfilter_average(uint8_t *scanline, uint8_t *prev, uint32_t width, int bpp) {
+    for (uint32_t x = 0; x < width * bpp; x++) {
+        uint8_t left = (x >= bpp) ? scanline[x - bpp] : 0;
+        uint8_t above = (prev != NULL) ? prev[x] : 0;
+        scanline[x] = (scanline[x] + ((left + above) / 2)) & 0xFF;
+    }
+}
+```
+
+### Filter Type 4: Paeth
+
+Uses the Paeth predictor to choose the best neighbor.
+
+```c
+uint8_t paeth_predictor(uint8_t a, uint8_t b, uint8_t c) {
+    int p = a + b - c;
+    int pa = abs(p - a);
+    int pb = abs(p - b);
+    int pc = abs(p - c);
+    
+    if (pa <= pb && pa <= pc) return a;
+    if (pb <= pc) return b;
+    return c;
+}
+
+void unfilter_paeth(uint8_t *scanline, uint8_t *prev, uint32_t width, int bpp) {
+    for (uint32_t x = 0; x < width * bpp; x++) {
+        uint8_t left = (x >= bpp) ? scanline[x - bpp] : 0;
+        uint8_t above = (prev != NULL) ? prev[x] : 0;
+        uint8_t upper_left = (prev != NULL && x >= bpp) ? prev[x - bpp] : 0;
+        
+        uint8_t predictor = paeth_predictor(left, above, upper_left);
+        scanline[x] = (scanline[x] + predictor) & 0xFF;
+    }
+}
+```
+
+## Key Concepts
+
+### Bytes Per Pixel (bpp)
+
+Different color types have different pixel sizes:
+
+- Color type 0 (Grayscale): 1 byte per pixel (bit_depth = 8)
+- Color type 2 (RGB): 3 bytes per pixel
+- Color type 3 (Palette): 1 byte per pixel (index)
+- Color type 4 (Grayscale + Alpha): 2 bytes per pixel
+- Color type 6 (RGB + Alpha): 4 bytes per pixel
+
+### Scanline Structure
+
+Each scanline consists of:
+- **Filter byte** (1 byte): Indicates filter type (0-4)
+- **Pixel data** (width × bpp bytes): Actual pixel values
+
+Total scanline size: `1 + (width × bpp)` bytes
+
+### Palette Index Remapping
+
+For palette images, pixel values are indices into the PLTE chunk. When merging palettes:
+
+1. Create merged palette containing all unique colors
+2. Build mapping table: `index_map[small_index] = merged_index`
+3. Remap all pixel indices in small image before pasting
+
+## Error Conditions
+
+- Returns `-1` if any parameter is NULL
+- Returns `-1` if either file cannot be opened or is not a valid PNG
+- Returns `-1` if IHDR chunks cannot be read or parsed
+- Returns `-1` if bit depths don't match (both must be 8)
+- Returns `-1` if color types don't match
+- Returns `-1` if bytes per pixel calculation fails
+- Returns `-1` if PLTE extraction fails (for palette images)
+- Returns `-1` if palette merging fails (merged palette exceeds 256 entries)
+- Returns `-1` if IDAT decompression fails
+- Returns `-1` if unfiltering fails (invalid filter type or data size mismatch)
+- Returns `-1` if output file cannot be written
+- Returns `-1` on any memory allocation failure
+
+## Limitations
+
+- Only supports 8-bit images
+- Both images must have the same bit depth and color type
+- No alpha blending - pixels are replaced directly
+- Palette images limited to 256 total colors after merging
+- Small image is clipped if it extends beyond large image boundaries
+
+## Technical Notes
+
+- All filter operations use modulo 256 arithmetic (`& 0xFF`)
+- Filter bytes are never modified during filtering/unfiltering
+- Output uses filter type 0 (None) for simplicity
+- Preserves chunk ordering per PNG specification
+- Uses `util_deflate_data_png()` for PNG-compatible compression

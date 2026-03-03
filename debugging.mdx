@@ -1,0 +1,685 @@
+---
+title: Debugging C Programs
+description: Tools and techniques for debugging the CSE320 homework assignments including GDB, Valgrind, and hex dumps
+---
+
+# Debugging C Programs
+
+Debugging is an essential skill for systems programming. This guide covers tools and techniques for finding and fixing bugs in your CSE320 assignments.
+
+## Debug Tools Overview
+
+<CardGroup cols={2}>
+  <Card title="GDB" icon="terminal">
+    GNU Debugger - Step through code, inspect variables, and analyze crashes
+  </Card>
+  
+  <Card title="Valgrind" icon="memory">
+    Memory error detector - Find leaks, invalid reads/writes, and use-after-free bugs
+  </Card>
+  
+  <Card title="Debug Macros" icon="code">
+    Print debugging - Use the debug() macro for controlled logging
+  </Card>
+  
+  <Card title="Hex Dump (hd)" icon="file-binary">
+    Binary file inspector - Examine PNG and gzip file structure
+  </Card>
+</CardGroup>
+
+## Compiling for Debugging
+
+Always compile with debug mode when actively debugging:
+
+```bash
+# Clean build with debug symbols and debug output enabled
+make clean debug
+```
+
+**What debug mode enables**:
+- `-g` flag: Includes debugging symbols (variable names, line numbers)
+- `-DDEBUG` macro: Activates `debug()` macro output
+- `-DCOLOR` macro: Colored terminal output
+- Message macros: `-DERROR -DSUCCESS -DWARN -DINFO`
+
+<Warning>
+  Debug mode produces extra output that violates assignment specifications. Always do a final test with `make clean all` (non-debug mode) before submitting.
+</Warning>
+
+## Using the Debug Macro
+
+### Basic Usage
+
+The `debug.h` header provides a `debug()` macro for printf-style debugging:
+
+```c
+#include "debug.h"
+
+int png_read_chunk(FILE *fp, png_chunk_t *out) {
+    debug("Reading chunk at file offset %ld", ftell(fp));
+    
+    uint32_t length;
+    if (fread(&length, 4, 1, fp) != 1) {
+        debug("Failed to read chunk length");
+        return -1;
+    }
+    
+    length = be32toh(length);
+    debug("Chunk length: %u bytes", length);
+    
+    // ... rest of function ...
+}
+```
+
+**Key points**:
+- `debug()` only prints when compiled with `-DDEBUG` (debug mode)
+- In non-debug builds, `debug()` calls are compiled out (no overhead)
+- Use it liberally during development, no need to remove before submission
+
+### Debug Output Example
+
+```bash
+# Compile with debug enabled
+make clean debug
+
+# Run with debug output
+bin/png -f tests/data/sample.png -s
+```
+
+Output:
+```
+[DEBUG] Opening PNG file: tests/data/sample.png
+[DEBUG] Reading PNG signature
+[DEBUG] Signature valid: 0x89504e47
+[DEBUG] Reading chunk at file offset 8
+[DEBUG] Chunk length: 13 bytes
+[DEBUG] Chunk type: IHDR
+[DEBUG] CRC check: valid
+Chunk Summary for tests/data/sample.png:
+  Chunk 0: Type=IHDR, Length=13, CRC=valid
+```
+
+## Using GDB (GNU Debugger)
+
+GDB is a powerful debugger for stepping through code and inspecting state.
+
+### Basic GDB Workflow
+
+<Steps>
+  <Step title="Compile with Debug Symbols">
+    ```bash
+    make clean debug
+    ```
+  </Step>
+
+  <Step title="Start GDB">
+    ```bash
+    gdb bin/png
+    ```
+    
+    You'll see the GDB prompt: `(gdb)`
+  </Step>
+
+  <Step title="Set Breakpoints">
+    ```gdb
+    # Break at start of main
+    (gdb) break main
+    
+    # Break at specific function
+    (gdb) break png_read_chunk
+    
+    # Break at file:line
+    (gdb) break png_reader.c:45
+    ```
+  </Step>
+
+  <Step title="Run the Program">
+    ```gdb
+    # Run with arguments
+    (gdb) run -f tests/data/sample.png -s
+    ```
+    
+    Program will stop at your breakpoint.
+  </Step>
+
+  <Step title="Step Through Code">
+    ```gdb
+    # Step to next line (steps into functions)
+    (gdb) step
+    
+    # Next line (steps over functions)
+    (gdb) next
+    
+    # Continue until next breakpoint
+    (gdb) continue
+    
+    # Finish current function and return
+    (gdb) finish
+    ```
+  </Step>
+
+  <Step title="Inspect Variables">
+    ```gdb
+    # Print variable value
+    (gdb) print chunk.length
+    
+    # Print with format (hex)
+    (gdb) print/x chunk.crc
+    
+    # Print entire struct
+    (gdb) print chunk
+    
+    # Print array elements
+    (gdb) print chunk.data[0]@16
+    ```
+  </Step>
+</Steps>
+
+### GDB Command Reference
+
+<CodeGroup>
+```gdb Navigation
+# Run program
+run [args]
+
+# Step into function calls
+step (or s)
+
+# Step over function calls
+next (or n)
+
+# Continue execution
+continue (or c)
+
+# Finish current function
+finish
+
+# Run until line number
+until 50
+```
+
+```gdb Breakpoints
+# Set breakpoint
+break function_name
+break file.c:line
+break file.c:line if condition
+
+# List breakpoints
+info breakpoints
+
+# Delete breakpoint
+delete 1
+
+# Disable/enable breakpoint
+disable 1
+enable 1
+
+# Conditional breakpoint
+break png_read_chunk if length > 1000
+```
+
+```gdb Inspection
+# Print variable
+print var
+print/x var  # hex format
+print/t var  # binary format
+print/c var  # char format
+
+# Print array
+print array[0]@10  # first 10 elements
+
+# Print struct
+print chunk
+print chunk.type
+
+# Display (auto-print each step)
+display chunk.length
+
+# Backtrace (call stack)
+backtrace (or bt)
+
+# List source code
+list
+list function_name
+```
+
+```gdb Other Commands
+# Show current location
+where
+
+# Examine memory
+x/16xb address  # 16 bytes in hex
+x/4xw address   # 4 words in hex
+
+# Get help
+help
+help breakpoints
+
+# Quit GDB
+quit (or q)
+```
+</CodeGroup>
+
+### Debugging Segmentation Faults
+
+When your program crashes with a segfault:
+
+```bash
+# Run in GDB
+gdb bin/png
+(gdb) run -f tests/data/sample.png -s
+
+# After crash:
+Program received signal SIGSEGV, Segmentation fault.
+0x0000555555555234 in png_read_chunk (fp=0x555555757260, out=0x0) at src/png_reader.c:67
+67          out->length = length;
+
+# Check backtrace
+(gdb) backtrace
+#0  0x0000555555555234 in png_read_chunk (fp=0x555555757260, out=0x0) at src/png_reader.c:67
+#1  0x0000555555555678 in main (argc=4, argv=0x7fffffffe0c8) at src/main.c:45
+
+# Inspect variables
+(gdb) print out
+$1 = (png_chunk_t *) 0x0
+
+# Problem: out is NULL!
+```
+
+**Common segfault causes**:
+- Null pointer dereference: `out->length` when `out` is NULL
+- Buffer overflow: Writing past end of allocated memory
+- Use-after-free: Accessing memory after `free()`
+- Stack overflow: Deep recursion or very large stack arrays
+
+### GDB with Criterion Tests
+
+Debug a specific failing test:
+
+```bash
+# Compile tests with debug symbols
+make clean debug
+
+# Run GDB on test suite
+gdb bin/png_tests
+
+# Set breakpoint in your function (not the test)
+(gdb) break png_read_chunk
+
+# Run specific test
+(gdb) run --filter=test_png_read_chunk
+
+# Debug as normal
+```
+
+## Using Valgrind
+
+Valgrind detects memory errors that might not cause immediate crashes.
+
+### Basic Valgrind Usage
+
+```bash
+# Compile with debug symbols (but non-debug mode for clean output)
+make clean all
+
+# Run with Valgrind
+valgrind --leak-check=full bin/png -f tests/data/sample.png -s
+```
+
+### Understanding Valgrind Output
+
+#### Memory Leak Detection
+
+```
+==12345== HEAP SUMMARY:
+==12345==     in use at exit: 768 bytes in 1 blocks
+==12345==   total heap usage: 5 allocs, 4 frees, 1,500 bytes allocated
+==12345== 
+==12345== 768 bytes in 1 blocks are definitely lost in loss record 1 of 1
+==12345==    at 0x4C2DB8F: malloc (in /usr/lib/valgrind/vgpreload_memcheck-amd64-linux.so)
+==12345==    by 0x108A45: png_parse_plte (png_chunks.c:78)
+==12345==    by 0x108C12: main (main.c:102)
+```
+
+**What it means**:
+- 768 bytes were allocated but never freed
+- Allocated at `png_chunks.c:78` (inside `malloc` call)
+- **Fix**: Add `free(colors)` before function returns
+
+#### Invalid Read/Write
+
+```
+==12345== Invalid read of size 4
+==12345==    at 0x108B67: png_read_chunk (png_reader.c:89)
+==12345==    by 0x108D45: main (main.c:56)
+==12345==  Address 0x5204044 is 4 bytes after a block of size 16 alloc'd
+==12345==    at 0x4C2DB8F: malloc (vgpreload_memcheck-amd64-linux.so)
+==12345==    by 0x108B12: png_read_chunk (png_reader.c:72)
+```
+
+**What it means**:
+- Reading 4 bytes past the end of a 16-byte buffer
+- Buffer allocated at line 72, invalid read at line 89
+- **Fix**: Check your buffer size calculations and loop bounds
+
+#### Use After Free
+
+```
+==12345== Invalid read of size 1
+==12345==    at 0x108C34: process_chunk (png_chunks.c:145)
+==12345==  Address 0x5204040 is 0 bytes inside a block of size 13 free'd
+==12345==    at 0x4C2EDEB: free (vgpreload_memcheck-amd64-linux.so)
+==12345==    by 0x108BF2: png_free_chunk (png_reader.c:112)
+```
+
+**What it means**:
+- Trying to read memory that was already freed
+- **Fix**: Don't use pointers after calling `free()`, or delay the `free()` call
+
+### Valgrind Command Options
+
+```bash
+# Full leak check with detailed info
+valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes bin/png -f test.png -s
+
+# Save output to file
+valgrind --leak-check=full --log-file=valgrind.log bin/png -f test.png -s
+
+# Run with tests
+valgrind --leak-check=full bin/png_tests --filter=test_parse_plte
+```
+
+## Examining Binary Files with Hex Dump
+
+PNG and gzip files are binary formats. Use `hd` (hex dump) to inspect them.
+
+### Basic Hex Dump Usage
+
+```bash
+# Display first part of PNG file
+hd tests/data/sample.png | head -20
+
+# Pipe to less for interactive viewing
+hd tests/data/sample.png | less
+
+# Show specific byte range
+hd -s 0 -n 32 tests/data/sample.png  # First 32 bytes
+```
+
+### Understanding Hex Dump Output
+
+```bash
+$ hd tests/data/Large_batman_3.png | head -5
+00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
+00000010  00 00 01 40 00 00 01 40  08 03 00 00 00 fa 4e 55  |...@...@......NU|
+00000020  e6 00 00 01 f8 50 4c 54  45 47 70 4c 00 00 00 02  |.....PLTEGpL....|
+00000030  01 00 05 04 00 06 05 01  0a 08 01 0b 09 01 0c 0b  |................|
+00000040  00 0f 0d 01 11 0f 01 12  0f 01 1c 18 02 28 23 02  |.............(#.|
+```
+
+**Reading the output**:
+- **Column 1** (`00000000`): Byte offset from file start (hex)
+- **Columns 2-9**: 16 bytes in hexadecimal
+- **Column 10** (`|.PNG........IHDR|`): ASCII representation (`.` for non-printable)
+
+### Verifying PNG Structure
+
+<Steps>
+  <Step title="Check PNG Signature">
+    First 8 bytes must be: `89 50 4e 47 0d 0a 1a 0a`
+    
+    ```bash
+    hd -n 8 tests/data/sample.png
+    00000000  89 50 4e 47 0d 0a 1a 0a                          |.PNG....|
+    ```
+  </Step>
+
+  <Step title="Verify IHDR Chunk">
+    After signature (offset 8):
+    - Length: 4 bytes (should be `00 00 00 0d` = 13 in big-endian)
+    - Type: 4 bytes (should be `49 48 44 52` = "IHDR")
+    - Data: 13 bytes
+    - CRC: 4 bytes
+    
+    ```bash
+    hd -s 8 -n 25 tests/data/sample.png
+    00000008  00 00 00 0d 49 48 44 52  00 00 01 40 00 00 01 40  |....IHDR...@...@|
+    00000018  08 03 00 00 00 fa 4e 55  e6                       |......NU.|
+    ```
+  </Step>
+
+  <Step title="Decode IHDR Data">
+    The 13 bytes at offset 16-28:
+    - Width: `00 00 01 40` = 320 pixels
+    - Height: `00 00 01 40` = 320 pixels
+    - Bit depth: `08` = 8 bits
+    - Color type: `03` = indexed (palette)
+    - Compression: `00`
+    - Filter: `00`
+    - Interlace: `00`
+  </Step>
+</Steps>
+
+### Comparing Binary Files
+
+```bash
+# Compare two PNG files byte-by-byte
+cmp tests/data/original.png /tmp/output.png
+
+# Show differences
+cmp -l tests/data/original.png /tmp/output.png
+
+# Use diff with hex dumps
+diff <(hd tests/data/original.png) <(hd /tmp/output.png)
+```
+
+## Common Debugging Scenarios
+
+### Scenario 1: Wrong CRC Checksum
+
+**Symptom**: CRC validation fails
+
+**Debug steps**:
+
+```c
+// Add debug output in your CRC calculation
+uint32_t png_crc(const uint8_t *buf, size_t len) {
+    debug("Computing CRC for %zu bytes", len);
+    
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t byte = buf[i];
+        // ... CRC calculation ...
+    }
+    
+    crc ^= 0xFFFFFFFF;
+    debug("Computed CRC: 0x%08x", crc);
+    return crc;
+}
+```
+
+**Common causes**:
+- Not including chunk type in CRC calculation
+- Using wrong byte order (endianness)
+- Not XORing final result with 0xFFFFFFFF
+
+### Scenario 2: Memory Corruption
+
+**Symptom**: Variables randomly change values, crashes in unrelated code
+
+**Debug with Valgrind**:
+
+```bash
+valgrind --leak-check=full --track-origins=yes bin/png -f test.png -s
+```
+
+Look for:
+- Buffer overflows ("Invalid write of size N")
+- Reading uninitialized memory ("Conditional jump depends on uninitialised value")
+
+**Debug with GDB**:
+
+```gdb
+# Set watchpoint on variable
+(gdb) watch chunk.length
+# Program will break when chunk.length is modified
+```
+
+### Scenario 3: Endianness Issues
+
+**Symptom**: Values are byte-swapped (e.g., expecting 13, getting 218103808)
+
+**Example**:
+
+```c
+// Wrong: Reading big-endian as-is on little-endian machine
+uint32_t length;
+fread(&length, 4, 1, fp);
+printf("%u\n", length);  // Prints wrong value!
+
+// Right: Convert from big-endian to host byte order
+uint32_t length;
+fread(&length, 4, 1, fp);
+length = be32toh(length);  // Use endian.h functions
+printf("%u\n", length);  // Correct!
+```
+
+**Debug in GDB**:
+
+```gdb
+(gdb) print/x length
+$1 = 0x0d000000  # Byte-swapped!
+(gdb) print/x be32toh(length)
+$2 = 0x0000000d  # Correct value (13)
+```
+
+### Scenario 4: File Pointer Issues
+
+**Symptom**: Reading wrong data from file, EOF unexpectedly
+
+**Debug with ftell**:
+
+```c
+long pos = ftell(fp);
+debug("File position before read: %ld", pos);
+
+int result = fread(buffer, size, 1, fp);
+debug("Read result: %d", result);
+
+pos = ftell(fp);
+debug("File position after read: %ld", pos);
+
+if (result != 1) {
+    if (feof(fp)) debug("EOF reached");
+    if (ferror(fp)) debug("Read error");
+}
+```
+
+## Debugging Checklist
+
+Before asking for help, try these steps:
+
+<Steps>
+  <Step title="Compile in Debug Mode">
+    ```bash
+    make clean debug
+    ```
+  </Step>
+
+  <Step title="Add Debug Output">
+    Use `debug()` macro to trace execution flow and variable values
+  </Step>
+
+  <Step title="Run Unit Tests">
+    ```bash
+    bin/png_tests --verbose=0
+    ```
+    Identify which test fails
+  </Step>
+
+  <Step title="Run Under Valgrind">
+    ```bash
+    valgrind --leak-check=full bin/png_tests --filter=failing_test
+    ```
+    Check for memory errors
+  </Step>
+
+  <Step title="Use GDB">
+    ```bash
+    gdb bin/png
+    (gdb) break png_read_chunk
+    (gdb) run -f tests/data/sample.png -s
+    ```
+    Step through and inspect variables
+  </Step>
+
+  <Step title="Examine Test Data">
+    ```bash
+    hd tests/data/sample.png | less
+    ```
+    Verify file structure matches expectations
+  </Step>
+</Steps>
+
+## Additional Debugging Tools
+
+### Printf Debugging
+
+Sometimes simple is best:
+
+```c
+// Temporary debug prints (remove before submission)
+fprintf(stderr, "DEBUG: chunk.length = %u\n", chunk.length);
+fprintf(stderr, "DEBUG: checkpoint reached at line %d\n", __LINE__);
+```
+
+### Assertions
+
+Catch bugs early:
+
+```c
+#include <assert.h>
+
+assert(out != NULL && "Output pointer must not be NULL");
+assert(length <= MAX_CHUNK_SIZE && "Chunk length too large");
+assert(fp != NULL && "File pointer must be valid");
+```
+
+### Static Analysis
+
+Use compiler warnings:
+
+```bash
+# The Makefile already enables -Wall -Werror
+# Pay attention to all warnings!
+make clean all
+```
+
+## Tips for Effective Debugging
+
+1. **Reproduce the bug consistently** - Find minimal input that triggers it
+2. **Divide and conquer** - Binary search the code (comment out half, see if bug persists)
+3. **Check your assumptions** - Verify input data, file formats, endianness
+4. **Read the specification** - The README files contain crucial details
+5. **Use version control** - Commit working code, experiment in branches
+6. **Take breaks** - Fresh eyes catch bugs faster
+7. **Explain it to someone** - Rubber duck debugging works!
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Run Tests" icon="flask" href="/testing">
+    Learn how to write and run Criterion tests
+  </Card>
+  
+  <Card title="Build the Project" icon="hammer" href="/building">
+    Understand the compilation process
+  </Card>
+</CardGroup>
+
+## References
+
+- [GDB Documentation](https://sourceware.org/gdb/documentation/)
+- [Valgrind User Manual](https://valgrind.org/docs/manual/manual.html)
+- [Beej's Guide to GDB](https://beej.us/guide/bggdb/)
+- Course Piazza for debugging help

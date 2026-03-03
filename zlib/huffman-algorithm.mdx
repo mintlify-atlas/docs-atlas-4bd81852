@@ -1,0 +1,610 @@
+---
+title: "Huffman Coding Algorithm"
+description: "Understanding Huffman coding and how it compresses data"
+---
+
+## What is Huffman Coding?
+
+Huffman coding is a lossless data compression algorithm that assigns variable-length bit codes to symbols based on their frequency. Frequently occurring symbols get shorter codes, while rare symbols get longer codes.
+
+The algorithm was developed by David A. Huffman in 1952 while he was a Ph.D. student at MIT.
+
+## How Huffman Coding Works
+
+### Basic Concept
+
+In normal (uncompressed) data, each byte is represented by 8 bits. But if we know some bytes occur more frequently than others, we can use fewer bits for common bytes and more bits for rare bytes, achieving overall compression.
+
+### Example
+
+Consider the string: `"AAAAAABBBCCD"`
+
+Frequency count:
+- A: 6 times
+- B: 3 times  
+- C: 2 times
+- D: 1 time
+
+Fixed-width encoding: 12 characters × 8 bits = 96 bits
+
+Huffman encoding:
+- A: `0` (1 bit) - most frequent
+- B: `10` (2 bits)
+- C: `110` (3 bits)
+- D: `111` (3 bits) - least frequent
+
+Encoded: `0000000` (6 A's) + `101010` (3 B's) + `110110` (2 C's) + `111` (1 D) = 22 bits
+
+Compression ratio: 22 / 96 = 23% of original size!
+
+## The Huffman Tree
+
+Huffman coding uses a binary tree to determine the bit code for each symbol.
+
+### Tree Structure
+
+From `huff.h` and described in README line 272-278:
+
+```c
+typedef struct huff_node {
+    struct huff_node* left;   // Left child (represents bit 0)
+    struct huff_node* right;  // Right child (represents bit 1)
+    int symbol;               // Symbol value (-1 for internal nodes)
+    unsigned long freq;       // Frequency count
+} huff_node_t;
+```
+
+### Leaf vs Internal Nodes
+
+- **Leaf nodes:** Store a symbol value and its frequency, have no children
+- **Internal nodes:** Store sum of children's frequencies, symbol = -1
+
+### Encoding from the Tree
+
+To find the code for a symbol:
+1. Start at the root
+2. Traverse to the leaf containing the symbol
+3. Record each branch: left = 0, right = 1
+4. The sequence of 0's and 1's is the Huffman code
+
+## Building a Huffman Tree
+
+<Steps>
+  <Step title="Count frequencies">
+    Count how often each symbol appears in the data
+  </Step>
+  
+  <Step title="Create leaf nodes">
+    Create a leaf node for each symbol with its frequency
+  </Step>
+  
+  <Step title="Build tree bottom-up">
+    Repeatedly:
+    - Find the two nodes with lowest frequencies
+    - Create a parent node with frequency = sum of children
+    - Remove the two nodes, add the parent
+  </Step>
+  
+  <Step title="Repeat until one node remains">
+    The final node is the root of the Huffman tree
+  </Step>
+</Steps>
+
+### Example Construction
+
+For `"AAAAAABBBCCD"`:
+
+```
+Initial nodes (sorted by frequency):
+D:1, C:2, B:3, A:6
+
+Step 1: Combine D:1 and C:2
+  (DC):3, B:3, A:6
+
+Step 2: Combine (DC):3 and B:3  
+  (BDC):6, A:6
+
+Step 3: Combine (BDC):6 and A:6
+  (ABDDC):12  <- Root
+
+Final tree:
+        (12)
+       /    \
+     (6)     A:6
+    /   \
+  (3)    B:3
+  / \
+ D:1 C:2
+
+Codes:
+D: 000
+C: 001  
+B: 01
+A: 1
+```
+
+<Note>
+The exact tree structure can vary based on tie-breaking rules when frequencies are equal. The assignment requires a canonical Huffman code to ensure consistency.
+</Note>
+
+## Canonical Huffman Codes
+
+Canonical Huffman codes ensure that trees can be reconstructed consistently from just the code lengths.
+
+### Properties
+
+1. **Same lengths:** Symbols with the same code length are in lexicographical order
+2. **Consecutive codes:** Codes of the same length are numerically consecutive
+3. **Prefix-free:** No code is a prefix of another
+
+### Why Canonical?
+
+Canonical codes allow efficient serialization:
+- Instead of storing the entire tree structure
+- Store only the code lengths for each symbol
+- Receiver can reconstruct the exact tree from lengths
+
+From README line 293:
+> A rule is added so that a Huffman tree can be consistently constructed in the same way: all byte values with the same encoded length/at the same level of the tree must be in lexicographical (alphabetical) order
+
+## Encoding with Huffman
+
+### Building Code Tables
+
+Once you have a Huffman tree, generate code tables:
+
+```c
+// Arrays to store codes and their lengths
+unsigned long codes[256];     // Huffman code for each symbol
+unsigned char lens[256];      // Bit length of each code
+
+// Traverse tree to build codes
+build_codes(root, 0, 0, codes, lens);
+```
+
+The `build_codes()` helper function:
+
+```c
+static void build_codes(const huff_node_t* node, 
+                        unsigned long code, 
+                        int len, 
+                        unsigned long* codes, 
+                        unsigned char* lens) {
+    if (!node) return;
+    
+    if (node->symbol != -1) {
+        // Leaf node - store code
+        codes[node->symbol] = code;
+        lens[node->symbol] = len;
+    } else {
+        // Internal node - recurse
+        build_codes(node->left, code << 1, len + 1, codes, lens);
+        build_codes(node->right, (code << 1) | 1, len + 1, codes, lens);
+    }
+}
+```
+
+### Encoding Data
+
+To encode a symbol:
+1. Look up its code and length in the tables
+2. Write the code bits to the output stream (MSB first for Huffman codes)
+
+```c
+void encode_symbol(unsigned char symbol, unsigned long* codes, unsigned char* lens) {
+    unsigned long code = codes[symbol];
+    int len = lens[symbol];
+    
+    // Write 'len' bits of 'code' to output stream
+    write_bits(code, len);
+}
+```
+
+## Decoding with Huffman
+
+### Tree-Based Decoding
+
+To decode:
+1. Start at the root of the tree
+2. Read one bit from the input stream
+3. Go left (0) or right (1)
+4. If you reach a leaf, output the symbol and return to root
+5. Repeat until all data is decoded
+
+```c
+int decode_symbol(huff_node_t* root, bitstream* input) {
+    huff_node_t* node = root;
+    
+    while (node->symbol == -1) {  // While not at leaf
+        int bit = read_bit(input);
+        node = (bit == 0) ? node->left : node->right;
+    }
+    
+    return node->symbol;
+}
+```
+
+### Table-Based Decoding
+
+For efficiency, use a decoder table instead of traversing the tree:
+
+```c
+typedef struct {
+    // Decoder lookup tables
+    int* symbols;
+    int* counts;
+    int* offsets;
+} huff_decoder_t;
+```
+
+The `build_decoder()` function creates tables for O(1) symbol lookup.
+
+## Reconstructing Trees from Code Lengths
+
+This is a crucial part of decompression. Given only code lengths, reconstruct the Huffman tree.
+
+### Algorithm
+
+From README lines 305-308:
+
+<Steps>
+  <Step title="Tabulate length frequencies">
+    Count how many codes have each length (1-bit, 2-bit, 3-bit, etc.)
+  </Step>
+  
+  <Step title="Calculate first code for each length">
+    Compute the first code value for each bit length
+  </Step>
+  
+  <Step title="Assign codes">
+    For each symbol, assign the next code of the appropriate length
+  </Step>
+</Steps>
+
+### Implementation
+
+The `canonical_codes()` helper function:
+
+```c
+static void canonical_codes(unsigned char* lens, 
+                             unsigned long* codes, 
+                             unsigned int range) {
+    // Count frequencies of each length
+    int len_count[16] = {0};
+    for (unsigned int i = 0; i < range; i++) {
+        if (lens[i] > 0) {
+            len_count[lens[i]]++;
+        }
+    }
+    
+    // Calculate first code for each length
+    unsigned long code = 0;
+    unsigned long next_code[16];
+    for (int bits = 1; bits <= 15; bits++) {
+        code = (code + len_count[bits - 1]) << 1;
+        next_code[bits] = code;
+    }
+    
+    // Assign codes to symbols
+    for (unsigned int i = 0; i < range; i++) {
+        int len = lens[i];
+        if (len > 0) {
+            codes[i] = next_code[len]++;
+        }
+    }
+}
+```
+
+## Static vs Dynamic Huffman
+
+The DEFLATE format supports two types of Huffman coding:
+
+### Static Huffman (BTYPE = 01)
+
+Uses predefined codes specified in RFC 1951:
+
+From README lines 467-477:
+
+```
+Lit Value    Bits        Codes
+---------    ----        -----
+  0 - 143     8          00110000 through 10111111
+144 - 255     9          110010000 through 111111111
+256 - 279     7          0000000 through 0010111
+280 - 287     8          11000000 through 11000111
+```
+
+Distance codes are all 5 bits: `00000` through `11101` (codes 0-29).
+
+**Advantages:**
+- No tree data to transmit
+- Simple to implement
+- Fast to decode
+
+**Disadvantages:**
+- Not optimized for specific data
+- May not compress as well as dynamic
+
+### Dynamic Huffman (BTYPE = 10)
+
+Builds custom Huffman trees optimized for the specific data being compressed.
+
+The trees are transmitted as part of the compressed data:
+1. Build optimal literal/length tree
+2. Build optimal distance tree  
+3. Extract code lengths from both trees
+4. Build a third tree to compress the code lengths (meta-compression!)
+5. Transmit the code length tree and the compressed code lengths
+
+**Advantages:**
+- Optimized for actual data
+- Better compression ratio
+
+**Disadvantages:**
+- More complex
+- Tree data adds overhead
+- Only worthwhile for larger blocks
+
+## Code Length Encoding
+
+Dynamic Huffman blocks use a clever trick: they compress the code lengths themselves!
+
+### Code Length Alphabet
+
+From README lines 490-500:
+
+```
+0 - 15: Represent code lengths of 0 - 15
+   16: Copy the previous code length 3 - 6 times (2 extra bits)
+   17: Repeat a code length of 0 for 3 - 10 times (3 extra bits)
+   18: Repeat a code length of 0 for 11 - 138 times (7 extra bits)
+```
+
+### Example
+
+Code lengths: `[8, 8, 8, 8, 8, 8, 0, 0, 0, 0, 5]`
+
+Compressed: `[8, 16+3 (copy 8 five more times), 17+1 (four zeros), 5]`
+
+This run-length encoding reduces the amount of data needed to describe the tree.
+
+### Code Length Order
+
+Code lengths are transmitted in a specific order (most common lengths first):
+
+From README line 486:
+```
+16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15
+```
+
+This allows shorter trees when only common lengths are used.
+
+## Helper Functions
+
+From README lines 311-319, the following helper functions are recommended:
+
+### Tree Building
+
+```c
+static huff_node_t* build_huffman_tree_from_freq(
+    unsigned int *frequencies, 
+    int num_symbols, 
+    unsigned long *codes, 
+    unsigned char *lens)
+```
+
+Builds a Huffman tree from frequency counts.
+
+### Code Generation
+
+```c
+static void build_codes(
+    const huff_node_t* node, 
+    unsigned long code, 
+    int len, 
+    unsigned long* codes, 
+    unsigned char* lens)
+```
+
+Traverses tree to generate codes.
+
+```c
+static void canonical_codes(
+    unsigned char* lens, 
+    unsigned long* codes, 
+    unsigned int range)
+```
+
+Generates canonical codes from lengths.
+
+### Encoding Helpers
+
+```c
+static int length_to_code(unsigned int length, unsigned int *extra_val)
+static int distance_to_code(unsigned int distance, unsigned int *extra_val)
+```
+
+Convert LZ77 lengths/distances to DEFLATE codes and extra bits.
+
+### Decoding Helpers
+
+```c
+static void build_decoder(
+    huff_decoder_t* dec, 
+    unsigned char* lens, 
+    int num_symbols)
+```
+
+Builds decoder tables from code lengths.
+
+```c
+static int decode_symbol(
+    huff_decoder_t* dec, 
+    const unsigned char* data, 
+    unsigned long* bits_read)
+```
+
+Decodes one symbol from the bit stream.
+
+### Memory Management
+
+```c
+static void free_tree(huff_node_t* n)
+```
+
+Recursively frees tree nodes.
+
+## Bit-Level Operations
+
+### Bit Packing Order
+
+From README lines 384-395:
+
+```
+* Data elements are packed into bytes in order of
+  increasing bit number within the byte, i.e., starting
+  with the least-significant bit of the byte.
+* Data elements other than Huffman codes are packed
+  starting with the least-significant bit of the data
+  element.
+* Huffman codes are packed starting with the most-
+  significant bit of the code.
+```
+
+### Byte Layout
+
+```
++--------+
+|76543210|
++--------+
+```
+
+Bits are numbered 0 (LSB) to 7 (MSB).
+
+### Reading Bits
+
+Bits are read from LSB to MSB within each byte:
+
+```c
+int read_bit(const unsigned char* data, unsigned long* bit_pos) {
+    int byte_idx = (*bit_pos) / 8;
+    int bit_idx = (*bit_pos) % 8;
+    int bit = (data[byte_idx] >> bit_idx) & 1;
+    (*bit_pos)++;
+    return bit;
+}
+```
+
+### Writing Bits
+
+Similarly, bits are written from LSB to MSB:
+
+```c
+void write_bit(unsigned char* data, unsigned long* bit_pos, int bit) {
+    int byte_idx = (*bit_pos) / 8;
+    int bit_idx = (*bit_pos) % 8;
+    if (bit) {
+        data[byte_idx] |= (1 << bit_idx);
+    }
+    (*bit_pos)++;
+}
+```
+
+<Warning>
+Huffman codes are written MSB first, but other data (lengths, distances) are written LSB first. Pay careful attention to the bit order!
+</Warning>
+
+## End-of-Block Symbol
+
+All Huffman blocks end with symbol **256** (not to be confused with byte value 0x00).
+
+From README line 398:
+> The way to distinguish between a length-offset tuple and a literal byte is that literal bytes have a value less than 256.
+
+Symbol meanings:
+- **0-255:** Literal bytes
+- **256:** End of block
+- **257-285:** Length codes (for LZ77 matches)
+
+## Example Encoding Flow
+
+<Tabs>
+  <Tab title="Encoding">
+    ```
+    Input: LZ77 tokens
+    
+    1. Count symbol frequencies
+       - Literal symbols (0-255)
+       - Length codes (257-285)
+       - End-of-block (256)
+    
+    2. Build Huffman tree for literals/lengths
+    
+    3. Count distance code frequencies
+    
+    4. Build Huffman tree for distances
+    
+    5. Extract code lengths
+    
+    6. Build code length tree
+    
+    7. Encode everything
+       - Block header
+       - Code length tree
+       - Literal/length code lengths (compressed)
+       - Distance code lengths (compressed)
+       - Actual data (Huffman encoded)
+       - End-of-block symbol (256)
+    
+    Output: Compressed bits
+    ```
+  </Tab>
+  
+  <Tab title="Decoding">
+    ```
+    Input: Compressed bits
+    
+    1. Read block header (BTYPE)
+    
+    2. If static: use predefined codes
+       If dynamic: read trees
+       - Read code length tree
+       - Decode literal/length code lengths
+       - Decode distance code lengths
+       - Build literal/length tree
+       - Build distance tree
+    
+    3. Decode data
+       - Read Huffman code
+       - If 0-255: output literal
+       - If 256: end of block
+       - If 257-285: decode length, then distance, perform LZ77 copy
+    
+    4. Repeat until 256 (end-of-block)
+    
+    Output: Decompressed data
+    ```
+  </Tab>
+</Tabs>
+
+## Summary
+
+Key Huffman coding concepts:
+
+- Variable-length codes based on symbol frequency
+- Frequent symbols get short codes, rare symbols get long codes
+- Codes are prefix-free (no code is a prefix of another)
+- Binary tree represents the codes
+- Canonical codes allow reconstruction from lengths only
+- Static Huffman uses predefined codes
+- Dynamic Huffman builds optimized trees
+- Code lengths are compressed using run-length encoding
+- Symbol 256 marks end-of-block
+- Bit packing order matters (LSB to MSB for data, MSB first for codes)
+
+## Next Steps
+
+- [Huffman Implementation](/zlib/huffman-implementation) - Implementing encoding and decoding
+- [GZIP Format](/zlib/gzip-format) - File format and member structure
+- [DEFLATE](/zlib/deflate) - Combining LZ77 and Huffman for compression
+- [INFLATE](/zlib/inflate) - Decompression process

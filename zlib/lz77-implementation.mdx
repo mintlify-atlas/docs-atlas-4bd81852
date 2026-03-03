@@ -1,0 +1,545 @@
+---
+title: "LZ77 Implementation"
+description: "Implementing LZ77 compression and decompression functions"
+---
+
+## Overview
+
+This page covers the implementation of LZ77 compression and decompression in `lz.c`. The LZ77 layer is the first compression step in DEFLATE and the last decompression step in INFLATE.
+
+## Required Functions
+
+You must implement in `lz.c`:
+
+### Compression Function
+
+```c
+lz_token_t* lz_compress_tokens(const unsigned char* data, 
+                                size_t len, 
+                                size_t* num_tokens)
+```
+
+### Helper Function
+
+```c
+static int find_match(const unsigned char* data, 
+                      size_t pos, 
+                      size_t len, 
+                      size_t offset_limit, 
+                      size_t* out_offset)
+```
+
+### Decompression
+
+LZ77 decompression is performed **within** the `huffman_decode()` function (see Part 3), since the data is Huffman-encoded before LZ77 decoding.
+
+## Data Structures
+
+### LZ77 Token
+
+From `lz.h:8-13`:
+
+```c
+typedef struct {
+    int is_literal;          // 1 = literal byte, 0 = match
+    unsigned char literal;   // Literal value (if is_literal=1)
+    unsigned int length;     // Match length (if is_literal=0)
+    unsigned int distance;   // Match distance (if is_literal=0)
+} lz_token_t;
+```
+
+### Constants
+
+From `lz.h:5-6`:
+
+```c
+#define LITLENGTH_BITS 9
+#define DISTANCE_BITS 5
+```
+
+## Compression Implementation
+
+### Function Signature
+
+```c
+lz_token_t* lz_compress_tokens(const unsigned char* data, 
+                                size_t len, 
+                                size_t* num_tokens)
+```
+
+**Parameters:**
+- `data` - Input data to compress
+- `len` - Length of input data in bytes
+- `num_tokens` - Output parameter: number of tokens generated
+
+**Returns:**
+- Pointer to malloc'd array of `lz_token_t` on success
+- `NULL` on error (NULL pointers, invalid data, etc.)
+
+<Warning>
+The returned array is malloc'd. The caller is responsible for freeing it.
+</Warning>
+
+### Algorithm
+
+<Steps>
+  <Step title="Allocate token array">
+    Allocate space for tokens. In the worst case, every byte becomes a literal token, so allocate `len` tokens.
+  </Step>
+  
+  <Step title="Initialize position">
+    Start at position 0 in the input data
+  </Step>
+  
+  <Step title="Find longest match">
+    Use `find_match()` to search the previous 32,768 bytes for the longest matching sequence
+  </Step>
+  
+  <Step title="Emit token">
+    - If match length ≥ 3: emit match token, advance by match length
+    - If match length < 3: emit literal token, advance by 1 byte
+  </Step>
+  
+  <Step title="Repeat">
+    Continue until all input data is processed
+  </Step>
+  
+  <Step title="Resize array">
+    Optionally `realloc` the token array to the actual number of tokens used
+  </Step>
+</Steps>
+
+### Pseudocode
+
+```c
+lz_token_t* lz_compress_tokens(const unsigned char* data, size_t len, size_t* num_tokens) {
+    if (!data || !num_tokens) return NULL;
+    
+    // Allocate maximum possible tokens (worst case: all literals)
+    lz_token_t* tokens = malloc(len * sizeof(lz_token_t));
+    if (!tokens) return NULL;
+    
+    size_t pos = 0;
+    size_t token_count = 0;
+    
+    while (pos < len) {
+        // How far back can we look?
+        size_t max_lookback = (pos > 32768) ? 32768 : pos;
+        
+        // Find the longest match
+        size_t match_dist = 0;
+        int match_len = find_match(data, pos, len, max_lookback, &match_dist);
+        
+        // Emit appropriate token
+        if (match_len >= 3 && match_len <= 258) {
+            // Emit match token
+            tokens[token_count].is_literal = 0;
+            tokens[token_count].literal = 0;
+            tokens[token_count].length = match_len;
+            tokens[token_count].distance = match_dist;
+            pos += match_len;
+        } else {
+            // Emit literal token
+            tokens[token_count].is_literal = 1;
+            tokens[token_count].literal = data[pos];
+            tokens[token_count].length = 0;
+            tokens[token_count].distance = 0;
+            pos++;
+        }
+        token_count++;
+    }
+    
+    *num_tokens = token_count;
+    return tokens;
+}
+```
+
+### Constraints
+
+- **Maximum distance:** 32,768 bytes
+- **Minimum match length:** 3 bytes
+- **Maximum match length:** 258 bytes
+- **Return NULL on invalid data:** NULL pointers, illegal values, etc.
+
+## Match Finding Implementation
+
+### Function Signature
+
+```c
+static int find_match(const unsigned char* data, 
+                      size_t pos, 
+                      size_t len, 
+                      size_t offset_limit, 
+                      size_t* out_offset)
+```
+
+**Parameters:**
+- `data` - Input data buffer
+- `pos` - Current position in the data
+- `len` - Total length of data
+- `offset_limit` - Maximum distance to search back (typically 32768 or `pos`)
+- `out_offset` - Output parameter: distance to the best match found
+
+**Returns:**
+- Length of the longest match found (0 if no match)
+- Sets `*out_offset` to the distance of the best match
+
+### Algorithm
+
+<Steps>
+  <Step title="Initialize best match">
+    Start with best_length = 0, best_distance = 0
+  </Step>
+  
+  <Step title="Search backwards">
+    For each position from 1 to offset_limit bytes back
+  </Step>
+  
+  <Step title="Compare sequences">
+    Count how many consecutive bytes match at this offset
+  </Step>
+  
+  <Step title="Update best match">
+    If this match is longer than the current best, update best_length and best_distance
+  </Step>
+  
+  <Step title="Apply constraints">
+    Limit match length to 258 bytes and remaining data length
+  </Step>
+  
+  <Step title="Return result">
+    Return the best match length and set output distance
+  </Step>
+</Steps>
+
+### Pseudocode
+
+```c
+static int find_match(const unsigned char* data, 
+                      size_t pos, 
+                      size_t len, 
+                      size_t offset_limit, 
+                      size_t* out_offset) {
+    int best_length = 0;
+    size_t best_distance = 0;
+    
+    // Search through the sliding window
+    for (size_t dist = 1; dist <= offset_limit; dist++) {
+        size_t match_pos = pos - dist;
+        int match_length = 0;
+        
+        // Count matching bytes
+        while (pos + match_length < len && 
+               data[match_pos + match_length] == data[pos + match_length] &&
+               match_length < 258) {
+            match_length++;
+        }
+        
+        // Update best match
+        if (match_length > best_length) {
+            best_length = match_length;
+            best_distance = dist;
+        }
+    }
+    
+    if (out_offset) {
+        *out_offset = best_distance;
+    }
+    
+    return best_length;
+}
+```
+
+<Warning>
+This naive implementation is O(n² * m) where n is data length and m is match length. It works but is slow.
+
+Optimizations like hash tables can reduce this to approximately O(n).
+</Warning>
+
+### Optimization Strategies
+
+<Accordion title="Hash Table Approach">
+Instead of checking every position:
+1. Build a hash table mapping byte sequences to positions
+2. For the current position, hash the next 3 bytes
+3. Look up positions in the hash table
+4. Only check positions that hash to the same value
+5. Update hash table as you progress
+
+This reduces the search space dramatically.
+</Accordion>
+
+<Accordion title="Early Termination">
+If you find a match of length 258 (the maximum), stop searching - you can't do better.
+
+```c
+if (match_length >= 258) {
+    break;  // Maximum possible match found
+}
+```
+</Accordion>
+
+<Accordion title="Lazy Matching">
+After finding a match, look ahead one position to see if a better match exists:
+- If the next position has a longer match, use that instead
+- This can improve compression ratio but requires more computation
+</Accordion>
+
+## Decompression Implementation
+
+LZ77 decompression is performed within `huffman_decode()` in `huff.c`, because the Huffman layer must be decoded first to obtain the LZ77 tokens.
+
+### Decompression Logic
+
+When `huffman_decode()` produces a code:
+
+```c
+if (code < 256) {
+    // Literal byte
+    output[output_pos++] = (unsigned char)code;
+} 
+else if (code == 256) {
+    // End of block
+    break;
+}
+else if (code >= 257 && code <= 285) {
+    // Length/distance pair
+    int length = decode_length(code);  // Get length from code + extra bits
+    int distance_code = decode_distance(); // Read distance code from stream
+    int distance = decode_distance_value(distance_code); // Get distance + extra bits
+    
+    // Copy bytes from earlier in output
+    for (int i = 0; i < length; i++) {
+        output[output_pos] = output[output_pos - distance];
+        output_pos++;
+    }
+}
+```
+
+### Handling Wrap-Around
+
+When `distance < length`, the copy wraps around:
+
+```c
+// Wrap-around case: distance = 1, length = 5, last byte = 'A'
+// Copy 'A' 5 times: AAAAA
+for (int i = 0; i < length; i++) {
+    output[output_pos] = output[output_pos - distance];
+    output_pos++;  // Important: increment after each byte
+}
+```
+
+<Note>
+By copying one byte at a time and incrementing the position, newly copied bytes become available for subsequent iterations. This creates run-length encoding.
+</Note>
+
+### Cross-Block References
+
+From `huff.h:9-10`:
+```c
+/* history/history_len: previously decompressed data for cross-block distance refs.
+ * Pass NULL/0 for single-block or standalone decode. */
+```
+
+Matches can reference data from previous blocks. The `history` parameter provides access to previously decompressed data:
+
+```c
+// Calculate source position
+size_t src_pos;
+if (distance <= output_pos) {
+    // Reference within current output
+    src_pos = output_pos - distance;
+} else {
+    // Reference into history buffer
+    src_pos = history_len - (distance - output_pos);
+    // Copy from history buffer
+}
+```
+
+### Invalid Distance Codes
+
+<Warning>
+Distance codes 30 and 31 are **invalid**. Your decompressor must return NULL if it encounters them.
+</Warning>
+
+From README line 257:
+> Although distance values of 30 and 31 can technically be expressed, your `lz_decompress` function should stop and return an error if it encounters them.
+
+```c
+if (distance_code == 30 || distance_code == 31) {
+    // Invalid distance code
+    return NULL;
+}
+```
+
+## Length and Distance Code Tables
+
+LZ77 lengths and distances are encoded using special codes plus extra bits.
+
+### Length Codes (257-285)
+
+From README lines 404-416:
+
+```
+      Extra               Extra               Extra
+ Code Bits Length(s) Code Bits Lengths   Code Bits Length(s)
+ ---- ---- ------     ---- ---- -------   ---- ---- -------
+  257   0     3       267   1   15,16     277   4   67-82
+  258   0     4       268   1   17,18     278   4   83-98
+  259   0     5       269   2   19-22     279   4   99-114
+  260   0     6       270   2   23-26     280   4  115-130
+  261   0     7       271   2   27-30     281   5  131-162
+  262   0     8       272   2   31-34     282   5  163-194
+  263   0     9       273   3   35-42     283   5  195-226
+  264   0    10       274   3   43-50     284   5  227-257
+  265   1  11,12      275   3   51-58     285   0    258
+  266   1  13,14      276   3   59-66
+```
+
+### Distance Codes (0-29)
+
+From README lines 418-430:
+
+```
+      Extra           Extra               Extra
+ Code Bits Dist  Code Bits   Dist     Code Bits Distance
+ ---- ---- ----  ---- ----  ------    ---- ---- --------
+   0   0    1     10   4     33-48    20    9   1025-1536
+   1   0    2     11   4     49-64    21    9   1537-2048
+   2   0    3     12   5     65-96    22   10   2049-3072
+   3   0    4     13   5     97-128   23   10   3073-4096
+   4   1   5,6    14   6    129-192   24   11   4097-6144
+   5   1   7,8    15   6    193-256   25   11   6145-8192
+   6   2   9-12   16   7    257-384   26   12  8193-12288
+   7   2  13-16   17   7    385-512   27   12 12289-16384
+   8   3  17-24   18   8    513-768   28   13 16385-24576
+   9   3  25-32   19   8   769-1024   29   13 24577-32768
+```
+
+### Decoding Lengths and Distances
+
+Helper functions in `huff.c`:
+
+```c
+static int length_to_code(unsigned int length, unsigned int *extra_val)
+static int distance_to_code(unsigned int distance, unsigned int *extra_val)
+```
+
+These convert between actual values and (code, extra_bits) pairs.
+
+## Error Handling
+
+### Compression Errors
+
+Return `NULL` if:
+- `data` is NULL
+- `num_tokens` is NULL  
+- Memory allocation fails
+- Invalid distance code generated
+
+### Decompression Errors
+
+Return `NULL` if:
+- Invalid distance code (30 or 31) encountered
+- Distance exceeds available history + output
+- Length + position exceeds buffer size
+- Invalid length code
+
+## Testing LZ77
+
+### Test Cases
+
+<Accordion title="Simple Repetition">
+**Input:** `"AAAAAA"`
+
+**Expected tokens:**
+```
+Literal('A')
+Literal('A')
+Literal('A')
+Match(distance=1, length=3)  // Copy last 'A' three times
+```
+
+Or:
+```
+Literal('A')
+Match(distance=1, length=5)  // Repeat 'A' five times
+```
+</Accordion>
+
+<Accordion title="Text Repetition">
+**Input:** `"the quick brown fox jumps over the lazy"`
+
+**Expected tokens:**
+Mostly literals, but the second "the" should be a match:
+```
+... [literals for first "the"] ...
+... [literals for " quick brown fox jumps over "] ...
+Match(distance=31, length=3)  // "the" repeated
+... [literals for " lazy"] ...
+```
+</Accordion>
+
+<Accordion title="No Matches">
+**Input:** `"ABCDEFGH"` (random data)
+
+**Expected tokens:**
+All literals - no matches possible
+```
+Literal('A'), Literal('B'), Literal('C'), ...
+```
+</Accordion>
+
+<Accordion title="Maximum Distance">
+Create data with a match exactly 32,768 bytes apart to test maximum distance.
+</Accordion>
+
+<Accordion title="Maximum Length">
+Create data with 258+ consecutive matching bytes to test maximum length constraint.
+</Accordion>
+
+### Validation
+
+For compression testing:
+1. Compress data into tokens
+2. Manually decompress tokens
+3. Verify output matches input
+
+## Memory Management
+
+<Warning>
+Always free the token array returned by `lz_compress_tokens()`:
+</Warning>
+
+```c
+size_t num_tokens;
+lz_token_t* tokens = lz_compress_tokens(data, len, &num_tokens);
+if (!tokens) {
+    // Handle error
+}
+
+// Use tokens...
+
+free(tokens);  // Don't forget!
+```
+
+## Summary
+
+Key implementation points:
+
+- `lz_compress_tokens()` converts raw data to LZ77 tokens
+- `find_match()` searches for the longest match in the sliding window
+- LZ77 decompression happens inside `huffman_decode()`
+- Minimum match length: 3 bytes
+- Maximum match length: 258 bytes
+- Maximum distance: 32,768 bytes
+- Handle wrap-around case (distance < length)
+- Reject distance codes 30 and 31
+- Return NULL on all error conditions
+- Free allocated memory
+
+## Next Steps
+
+- [Huffman Algorithm](/zlib/huffman-algorithm) - Next compression layer
+- [Huffman Implementation](/zlib/huffman-implementation) - Implementing Huffman coding
+- [DEFLATE](/zlib/deflate) - Combining LZ77 and Huffman

@@ -1,0 +1,558 @@
+---
+title: "DEFLATE Compression"
+description: "Implementing the DEFLATE compression algorithm"
+---
+
+## Overview
+
+DEFLATE is the compression algorithm used in GZIP files. It combines LZ77 sliding window compression with Huffman coding to achieve efficient lossless compression.
+
+The DEFLATE algorithm is specified in [RFC 1951](http://tools.ietf.org/html/rfc1951).
+
+## DEFLATE Function
+
+From `our_zlib.h:71`:
+
+```c
+char* deflate(char* filename, char* bytes, size_t len, size_t* out_len)
+```
+
+**Parameters:**
+- `filename` - Pointer to the filename (used for GZIP header metadata)
+- `bytes` - Pointer to data to compress
+- `len` - Number of bytes of input data
+- `out_len` - Output parameter for the length of the compressed data
+
+**Returns:**
+- A malloc'd buffer containing a complete GZIP file (header + compressed data + footer)
+- `NULL` on error (NULL pointers, compression failure, etc.)
+
+<Warning>
+The returned buffer is malloc'd. The caller is responsible for freeing it.
+</Warning>
+
+## DEFLATE Algorithm
+
+The DEFLATE compression process consists of several steps:
+
+<Steps>
+  <Step title="Build GZIP header">
+    Create a GZIP member header with metadata
+  </Step>
+  
+  <Step title="Chunk data into blocks">
+    Split input into blocks of at most 65,535 bytes
+  </Step>
+  
+  <Step title="LZ77 compression">
+    Apply LZ77 to find repeated sequences
+  </Step>
+  
+  <Step title="Huffman encoding">
+    Encode LZ77 tokens with Huffman coding
+  </Step>
+  
+  <Step title="Build GZIP footer">
+    Compute CRC and add footer
+  </Step>
+  
+  <Step title="Return complete GZIP file">
+    Concatenate header + compressed blocks + footer
+  </Step>
+</Steps>
+
+## DEFLATE Flowchart
+
+From README lines 551-646:
+
+```
+INPUT: Raw uncompressed data
+    |  Gets chunked into 65535-byte blocks
+    v
++------------------------------------------------------------------+
+|                         LZ77 TRANSFORM                           |
++------------------------------------------------------------------+
+| - Scan input for matches in sliding window                       |
+| - Output: Stream of literals + <length, distance> pairs          |
++------------------------------------------------------------------+
+    |
+    | Stream: literals and match tokens
+    |
+    v
++------------------------------------------------------------------+
+|              ENCODE TO LITERAL/LENGTH & DISTANCE CODES           |
++------------------------------------------------------------------+
+| - Map lengths (3-258) to codes (257-285) + extra bits            |
+| - Map distances (1-32768) to codes (0-29) + extra bits           |
+| - Literals (0-255) stay as codes (0-255)                         |
+| - Code 256 = end-of-block                                        |
++------------------------------------------------------------------+
+    |
+    v
+    +------------------------+
+    |   Choose BTYPE         |
+    +------------------------+
+          |
+     +----+----+
+     |         |
+  BTYPE=01  BTYPE=10
+  (Fixed)   (Dynamic)
+     |         |
+     v         v
++--------+  +------------------------------------------+
+| FIXED  |  |  BUILD HUFFMAN TREES                     |
+| CODES  |  +------------------------------------------+
++--------+  | 1. Analyze frequency of lit/len codes    |
+     |      | 2. Build optimal lit/len Huffman tree    |
+     |      | 3. Analyze frequency of distance codes   |
+     |      | 4. Build optimal distance Huffman tree   |
+     |      +------------------------------------------+
+     |                      |
+     |                      v
+     |      +------------------------------------------+
+     |      |  EXTRACT CODE LENGTHS FROM TREES         |
+     |      +------------------------------------------+
+     |                      |
+     |                      v
+     |      +------------------------------------------+
+     |      |  BUILD CODE LENGTH HUFFMAN TREE          |
+     |      +------------------------------------------+
+     |                      |
+     |                      v
+     |      +------------------------------------------+
+     |      |  WRITE DYNAMIC BLOCK HEADER              |
+     |      | - HLIT, HDIST, HCLEN                     |
+     |      | - Code length tree                       |
+     |      | - Lit/len and distance code lengths      |
+     |      +------------------------------------------+
+     |                      |
+     +----------------------+
+                           |
+                           v
++------------------------------------------------------------------+
+|           ENCODE LZ77 DATA WITH HUFFMAN CODES                    |
++------------------------------------------------------------------+
+| - For each token:                                                |
+|   * Lookup Huffman code from tree                                |
+|   * Write Huffman code bits                                      |
+|   * Write extra bits (if any)                                    |
+| - Write end-of-block (code 256)                                  |
++------------------------------------------------------------------+
+    |
+    v
+OUTPUT: Compressed DEFLATE block
+```
+
+## Block Size Constraints
+
+From README lines 433-444:
+
+> For simplicity and consistency during testing, compressed blocks produced by your code should hold at most 65535 bytes, the same restriction placed on uncompressed blocks.
+
+<Warning>
+Split input data into chunks of at most 65,535 bytes before compressing each chunk.
+</Warning>
+
+From `our_zlib.h:15`:
+```c
+#define DEFLATE_BLOCK_SIZE 65535
+```
+
+<Note>
+While your compressor should create blocks of at most 65,535 bytes, your **decompressor** must handle blocks of any size.
+</Note>
+
+## Implementation Steps
+
+### Step 1: Build GZIP Header
+
+Create a GZIP member header:
+
+```c
+// Write magic number
+output[pos++] = 0x1f;
+output[pos++] = 0x8b;
+
+// Write compression method (8 = DEFLATE)
+output[pos++] = 8;
+
+// Write flags
+unsigned char flags = 0;
+if (filename && filename[0]) {
+    flags |= F_NAME;  // Include original filename
+}
+output[pos++] = flags;
+
+// Write modification time (use current time or 0)
+unsigned int mtime = time(NULL);
+write_32_le(output, &pos, mtime);
+
+// Write extra flags (0 = default compression)
+output[pos++] = 0;
+
+// Write OS (3 = Unix)
+output[pos++] = 3;
+
+// Write optional filename
+if (flags & F_NAME) {
+    strcpy((char*)&output[pos], filename);
+    pos += strlen(filename) + 1;  // Include null terminator
+}
+```
+
+### Step 2: Chunk Data into Blocks
+
+Split the input into blocks:
+
+```c
+size_t offset = 0;
+while (offset < len) {
+    size_t block_size = (len - offset > DEFLATE_BLOCK_SIZE) 
+                        ? DEFLATE_BLOCK_SIZE 
+                        : (len - offset);
+    
+    // Compress this block
+    compress_block(bytes + offset, block_size, is_final_block);
+    
+    offset += block_size;
+}
+```
+
+### Step 3: Compress Each Block
+
+For each block:
+
+```c
+void compress_block(const unsigned char* data, size_t len, int is_final) {
+    // Step 3a: Apply LZ77 compression
+    size_t num_tokens;
+    lz_token_t* tokens = lz_compress_tokens(data, len, &num_tokens);
+    if (!tokens) {
+        return;  // Error
+    }
+    
+    // Step 3b: Huffman encode the tokens
+    unsigned long bits_written;
+    size_t encoded_len;
+    unsigned char btype;
+    unsigned char* encoded = huffman_encode_tokens(
+        tokens, num_tokens, &bits_written, &encoded_len, &btype);
+    
+    free(tokens);
+    
+    if (!encoded) {
+        return;  // Error
+    }
+    
+    // Step 3c: Write block header
+    write_block_header(is_final, btype);
+    
+    // Step 3d: Write encoded data
+    write_block_data(encoded, bits_written);
+    
+    free(encoded);
+}
+```
+
+### Step 4: Write Block Header
+
+From README lines 447-456:
+
+```
+Each 'block' of compressed data begins with three header **bits** (NOT bytes).
+The first, `BFINAL` is 1 if and only if this block is the last block.
+The next two, `BTYPE` contains information about the compression mode.
+
+00 - no compression
+01 - compressed with fixed Huffman codes
+10 - compressed with dynamic Huffman codes
+11 - reserved (your program MUST throw an error if it encounters this)
+```
+
+From `our_zlib.h:10-14`:
+```c
+#define BF_SET              1  // BFINAL = 1
+#define BT_STATIC           1  // Fixed Huffman
+#define BT_DYNAMIC          2  // Dynamic Huffman
+#define BT_NO_COMPRESSION   0  // Uncompressed
+#define BT_MASK             3  // Mask for BTYPE bits
+```
+
+**Writing the header:**
+
+```c
+void write_block_header(int is_final, int btype) {
+    // 3-bit header: BFINAL (1 bit) + BTYPE (2 bits)
+    unsigned char header = 0;
+    if (is_final) {
+        header |= 1;  // BFINAL = 1
+    }
+    header |= (btype << 1);  // BTYPE in bits 1-2
+    
+    // Write 3 bits to output stream
+    write_bits(header, 3);
+}
+```
+
+### Step 5: Write Compressed Data
+
+Write the Huffman-encoded data:
+
+```c
+void write_block_data(const unsigned char* data, unsigned long num_bits) {
+    // Copy bits to output stream
+    for (unsigned long i = 0; i < num_bits; i++) {
+        int bit = (data[i/8] >> (i%8)) & 1;
+        write_bit(bit);
+    }
+}
+```
+
+### Step 6: Write GZIP Footer
+
+After all blocks are written:
+
+```c
+// Compute CRC32 of original data
+unsigned int crc = get_crc((unsigned char*)bytes, len);
+write_32_le(output, &pos, crc);
+
+// Write uncompressed size (modulo 2^32)
+write_32_le(output, &pos, (unsigned int)len);
+```
+
+## Complete Implementation Outline
+
+```c
+char* deflate(char* filename, char* bytes, size_t len, size_t* out_len) {
+    if (!bytes || !len || !out_len) return NULL;
+    
+    // Allocate output buffer (estimate)
+    size_t output_capacity = len + 1024;  // Header + footer + overhead
+    unsigned char* output = malloc(output_capacity);
+    if (!output) return NULL;
+    
+    size_t pos = 0;
+    unsigned long bit_pos = 0;
+    
+    // 1. Write GZIP header
+    pos += write_gzip_header(output + pos, filename);
+    bit_pos = pos * 8;
+    
+    // 2. Compress data in blocks
+    size_t offset = 0;
+    while (offset < len) {
+        size_t block_size = (len - offset > DEFLATE_BLOCK_SIZE)
+                            ? DEFLATE_BLOCK_SIZE
+                            : (len - offset);
+        int is_final = (offset + block_size >= len);
+        
+        // LZ77 compression
+        size_t num_tokens;
+        lz_token_t* tokens = lz_compress_tokens(
+            (unsigned char*)bytes + offset, block_size, &num_tokens);
+        if (!tokens) {
+            free(output);
+            return NULL;
+        }
+        
+        // Huffman encoding
+        unsigned long block_bits;
+        size_t block_bytes;
+        unsigned char btype;
+        unsigned char* block_data = huffman_encode_tokens(
+            tokens, num_tokens, &block_bits, &block_bytes, &btype);
+        free(tokens);
+        
+        if (!block_data) {
+            free(output);
+            return NULL;
+        }
+        
+        // Ensure buffer has space
+        while (pos + block_bytes + 100 > output_capacity) {
+            output_capacity *= 2;
+            output = realloc(output, output_capacity);
+        }
+        
+        // Write block header (3 bits)
+        unsigned char block_header = (is_final ? 1 : 0) | (btype << 1);
+        write_bits_to_buffer(output, &bit_pos, block_header, 3);
+        
+        // Write block data
+        copy_bits_to_buffer(output, &bit_pos, block_data, block_bits);
+        free(block_data);
+        
+        offset += block_size;
+    }
+    
+    // 3. Pad to byte boundary
+    if (bit_pos % 8 != 0) {
+        bit_pos = (bit_pos + 7) & ~7;
+    }
+    pos = bit_pos / 8;
+    
+    // 4. Write GZIP footer
+    unsigned int crc = get_crc((unsigned char*)bytes, len);
+    write_32_le(output, &pos, crc);
+    write_32_le(output, &pos, (unsigned int)len);
+    
+    *out_len = pos;
+    return (char*)output;
+}
+```
+
+## Helper Functions
+
+### Writing Little-Endian Integers
+
+```c
+void write_32_le(unsigned char* buf, size_t* pos, unsigned int value) {
+    buf[(*pos)++] = value & 0xFF;
+    buf[(*pos)++] = (value >> 8) & 0xFF;
+    buf[(*pos)++] = (value >> 16) & 0xFF;
+    buf[(*pos)++] = (value >> 24) & 0xFF;
+}
+
+void write_16_le(unsigned char* buf, size_t* pos, unsigned short value) {
+    buf[(*pos)++] = value & 0xFF;
+    buf[(*pos)++] = (value >> 8) & 0xFF;
+}
+```
+
+### Bit Writing
+
+```c
+void write_bits_to_buffer(unsigned char* buf, unsigned long* bit_pos, 
+                          unsigned int value, int num_bits) {
+    for (int i = 0; i < num_bits; i++) {
+        int byte_idx = (*bit_pos) / 8;
+        int bit_idx = (*bit_pos) % 8;
+        if (value & (1 << i)) {
+            buf[byte_idx] |= (1 << bit_idx);
+        }
+        (*bit_pos)++;
+    }
+}
+```
+
+## Testing DEFLATE
+
+### Test Cases
+
+<Accordion title="Empty File">
+Input: 0 bytes
+
+Expected: Valid GZIP file with header + empty block + footer
+</Accordion>
+
+<Accordion title="Small File">
+Input: "Hello, World!" (13 bytes)
+
+Expected: Single block, compressible
+</Accordion>
+
+<Accordion title="Large File">
+Input: 200 KB of data
+
+Expected: Multiple blocks (at least 4), each ≤ 65,535 bytes
+</Accordion>
+
+<Accordion title="Highly Compressible">
+Input: "AAAAAAA..." (1000 A's)
+
+Expected: Very small output due to LZ77 matches
+</Accordion>
+
+<Accordion title="Random Data">
+Input: Random bytes (low compressibility)
+
+Expected: Output nearly as large as input
+</Accordion>
+
+### Validation
+
+1. **Round-trip test:** Compress then decompress, verify output matches input
+2. **Standard tools:** Use `gunzip` to decompress your output
+3. **Header validation:** Check magic number, CRC, size are correct
+4. **Block structure:** Verify BFINAL is set only on last block
+
+```bash
+# Test with gunzip
+./bin/png -i input.txt -c -o output.gz
+gunzip -t output.gz  # Test integrity
+gunzip -c output.gz > result.txt  # Decompress
+diff input.txt result.txt  # Should be identical
+```
+
+## Error Handling
+
+Return `NULL` if:
+
+- `bytes` is NULL
+- `len` is 0 (or handle as special case)
+- `out_len` is NULL
+- `lz_compress_tokens()` fails
+- `huffman_encode_tokens()` fails
+- Memory allocation fails
+
+## Memory Management
+
+<Warning>
+Free all intermediate buffers:
+- LZ77 tokens
+- Huffman-encoded blocks
+- Temporary buffers
+
+The caller must free the returned buffer.
+</Warning>
+
+## Implementation Reference
+
+See `main.c:102-139` for how `deflate()` is called:
+
+```c
+case M_DEFLATE: {
+    // Read entire input file
+    char* input = malloc((size_t)file_size);
+    fread(input, 1, (size_t)file_size, file);
+    
+    // Compress
+    size_t out_len = 0;
+    char* out_buf = deflate(filename, input, (size_t)file_size, &out_len);
+    free(input);
+    
+    if (!out_buf) {
+        return 1;  // Error
+    }
+    
+    // Write compressed data
+    FILE* out = fopen(output_filename, "wb");
+    fwrite(out_buf, 1, out_len, out);
+    fclose(out);
+    free(out_buf);
+    break;
+}
+```
+
+## Summary
+
+Key DEFLATE implementation points:
+
+- Combine LZ77 + Huffman for compression
+- Build complete GZIP file (header + blocks + footer)
+- Split data into blocks of ≤ 65,535 bytes
+- Each block has 3-bit header (BFINAL + BTYPE)
+- Choose between static and dynamic Huffman per block
+- Compute CRC32 of original data
+- Write ISIZE in footer
+- All multi-byte integers are little-endian
+- Return malloc'd buffer
+- Handle all error cases
+
+## Next Steps
+
+- [INFLATE](/zlib/inflate) - Decompression algorithm
+- [LZ77 Implementation](/zlib/lz77-implementation) - LZ77 compression details
+- [Huffman Implementation](/zlib/huffman-implementation) - Huffman encoding details
+- [GZIP Format](/zlib/gzip-format) - File format specification

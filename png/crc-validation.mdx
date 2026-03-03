@@ -1,0 +1,429 @@
+---
+title: CRC-32 validation
+description: Implementing CRC-32 checksums for PNG chunk validation
+---
+
+## Overview
+
+PNG uses CRC-32 (Cyclic Redundancy Check) to detect data corruption in chunks. Every chunk includes a 4-byte CRC computed over the chunk's type and data fields. You must implement the CRC-32 algorithm to validate chunks as you read them.
+
+## What is CRC?
+
+CRC (Cyclic Redundancy Check) is an error-detecting code that:
+
+<CardGroup cols={2}>
+  <Card title="Detects corruption" icon="shield-check">
+    Identifies if data has been modified or corrupted
+  </Card>
+  <Card title="Fast computation" icon="gauge-high">
+    Uses lookup tables for efficient calculation
+  </Card>
+  <Card title="Standardized" icon="book">
+    PNG uses CRC-32 with polynomial 0xEDB88320
+  </Card>
+  <Card title="Not cryptographic" icon="info">
+    Only detects accidental corruption, not malicious changes
+  </Card>
+</CardGroup>
+
+## PNG CRC specification
+
+### CRC parameters
+
+<ResponseField name="Polynomial" type="hex">
+  `0xEDB88320` (bit-reversed version of 0x04C11DB7)
+</ResponseField>
+
+<ResponseField name="Initial value" type="hex">
+  `0xFFFFFFFF` (all bits set)
+</ResponseField>
+
+<ResponseField name="Final XOR" type="hex">
+  `0xFFFFFFFF` (invert all bits)
+</ResponseField>
+
+<ResponseField name="Input" type="bytes">
+  Chunk type (4 bytes) + chunk data (variable length)
+</ResponseField>
+
+<Note>
+  The CRC is computed over the type AND data fields, but NOT the length or CRC fields themselves.
+</Note>
+
+## CRC-32 algorithm
+
+### High-level overview
+
+<Steps>
+  <Step title="Initialize CRC table">
+    Build a 256-entry lookup table (done once, can be static)
+  </Step>
+  <Step title="Initialize CRC value">
+    Start with 0xFFFFFFFF
+  </Step>
+  <Step title="Process each byte">
+    For each byte in the input:
+    - XOR CRC with byte
+    - Use low 8 bits as table index
+    - XOR table value with CRC shifted right 8 bits
+  </Step>
+  <Step title="Finalize">
+    XOR final CRC with 0xFFFFFFFF
+  </Step>
+</Steps>
+
+### Building the lookup table
+
+The lookup table is computed once and can be reused:
+
+```c
+// Global or static variable
+static uint32_t crc_table[256];
+static int table_computed = 0;
+
+void make_crc_table(void) {
+    uint32_t c;
+    int n, k;
+    
+    for (n = 0; n < 256; n++) {
+        c = (uint32_t) n;
+        for (k = 0; k < 8; k++) {
+            if (c & 1) {
+                c = 0xEDB88320 ^ (c >> 1);
+            } else {
+                c = c >> 1;
+            }
+        }
+        crc_table[n] = c;
+    }
+    table_computed = 1;
+}
+```
+
+### CRC computation
+
+Once the table is built, compute CRC over a buffer:
+
+```c
+uint32_t png_crc(const uint8_t *buf, size_t len) {
+    uint32_t c;
+    size_t n;
+    
+    // Build table on first call
+    if (!table_computed) {
+        make_crc_table();
+    }
+    
+    // Initialize
+    c = 0xFFFFFFFF;
+    
+    // Process each byte
+    for (n = 0; n < len; n++) {
+        c = crc_table[(c ^ buf[n]) & 0xFF] ^ (c >> 8);
+    }
+    
+    // Finalize (invert all bits)
+    return c ^ 0xFFFFFFFF;
+}
+```
+
+## Using CRC in PNG chunks
+
+### Computing CRC for a chunk
+
+The CRC is computed over the **type** (4 bytes) + **data** (variable length):
+
+```c
+// Given a chunk structure:
+// typedef struct {
+//     uint32_t length;
+//     char     type[5];
+//     uint8_t *data;
+//     uint32_t crc;
+// } png_chunk_t;
+
+uint32_t compute_chunk_crc(const png_chunk_t *chunk) {
+    // Need to combine type + data into one buffer
+    size_t total_len = 4 + chunk->length;
+    uint8_t *buffer = malloc(total_len);
+    
+    if (!buffer) {
+        return 0;
+    }
+    
+    // Copy type (4 bytes, not including null terminator)
+    memcpy(buffer, chunk->type, 4);
+    
+    // Copy data (if any)
+    if (chunk->length > 0 && chunk->data) {
+        memcpy(buffer + 4, chunk->data, chunk->length);
+    }
+    
+    // Compute CRC
+    uint32_t crc = png_crc(buffer, total_len);
+    
+    free(buffer);
+    return crc;
+}
+```
+
+### Validating a chunk
+
+After reading a chunk, validate its CRC:
+
+```c
+int png_read_chunk(FILE *fp, png_chunk_t *out) {
+    // ... read length, type, data, and stored CRC ...
+    
+    // Compute CRC over type + data
+    uint32_t computed = compute_chunk_crc(out);
+    
+    // Compare with stored CRC
+    if (computed != out->crc) {
+        // CRC mismatch - chunk is corrupted!
+        png_free_chunk(out);
+        return -1;
+    }
+    
+    return 0; // CRC is valid
+}
+```
+
+## Example: Step-by-step CRC
+
+Let's compute the CRC for an IEND chunk (which has no data):
+
+<Steps>
+  <Step title="Input bytes">
+    Type: "IEND" = `[0x49, 0x45, 0x4E, 0x44]`
+    
+    Data: (none)
+  </Step>
+  
+  <Step title="Initialize">
+    `c = 0xFFFFFFFF`
+  </Step>
+  
+  <Step title="Process byte 0x49">
+    ```
+    index = (c ^ 0x49) & 0xFF = 0xB6
+    c = crc_table[0xB6] ^ (c >> 8)
+    ```
+  </Step>
+  
+  <Step title="Process bytes 0x45, 0x4E, 0x44">
+    Repeat for each byte using the lookup table
+  </Step>
+  
+  <Step title="Finalize">
+    `result = c ^ 0xFFFFFFFF = 0xAE426082`
+  </Step>
+</Steps>
+
+The CRC for "IEND" with no data is `0xAE426082`.
+
+## Reporting CRC status
+
+When printing chunk summaries, indicate if CRC is valid:
+
+```c
+PRINT_CHUNK_INFO(i, chunk);
+// Output: Chunk 0: Type=IHDR, Length=13, CRC=valid
+```
+
+The macro uses the chunk's validity (you can add a flag to the struct):
+
+```c
+typedef struct {
+    uint32_t length;
+    char     type[5];
+    uint8_t *data;
+    uint32_t crc;
+    int      crc_valid; // Add this field
+} png_chunk_t;
+```
+
+Or compute it on-the-fly:
+
+```c
+for (int i = 0; i < count; i++) {
+    uint32_t computed = compute_chunk_crc(&chunks[i]);
+    int valid = (computed == chunks[i].crc);
+    
+    printf("  Chunk %d: Type=%s, Length=%u, CRC=%s\n",
+           i, chunks[i].type, chunks[i].length,
+           valid ? "valid" : "invalid");
+}
+```
+
+## Using the PNG spec sample code
+
+The PNG specification appendix includes sample C code for CRC computation. You are **explicitly allowed** to use this code:
+
+[PNG Specification - Sample CRC Code](https://www.libpng.org/pub/png/spec/1.2/PNG-CRCAppendix.html)
+
+<Tip>
+  The spec's sample code is well-tested and handles all edge cases correctly. Using it can save you time and prevent bugs.
+</Tip>
+
+## Common errors
+
+<Accordion title="Not including type in CRC">
+  **Problem:** Computing CRC over data only
+  
+  **Solution:** CRC covers type (4 bytes) + data
+  
+  ```c
+  // WRONG
+  uint32_t crc = png_crc(chunk->data, chunk->length);
+  
+  // CORRECT
+  uint8_t *buffer = malloc(4 + chunk->length);
+  memcpy(buffer, chunk->type, 4);
+  memcpy(buffer + 4, chunk->data, chunk->length);
+  uint32_t crc = png_crc(buffer, 4 + chunk->length);
+  free(buffer);
+  ```
+</Accordion>
+
+<Accordion title="Including null terminator in type">
+  **Problem:** Copying 5 bytes from `type[5]` instead of 4
+  
+  **Solution:** Only copy 4 bytes (the actual type, not null terminator)
+  
+  ```c
+  // WRONG
+  memcpy(buffer, chunk->type, 5); // Includes '\0'
+  
+  // CORRECT
+  memcpy(buffer, chunk->type, 4); // Only "IHDR", not '\0'
+  ```
+</Accordion>
+
+<Accordion title="Not converting CRC endianness">
+  **Problem:** CRC in file is big-endian, comparing with little-endian value
+  
+  **Solution:** Convert stored CRC from big-endian when reading
+  
+  ```c
+  uint8_t crc_bytes[4];
+  fread(crc_bytes, 1, 4, fp);
+  
+  // Convert from big-endian
+  out->crc = read_u32_be(crc_bytes);
+  ```
+</Accordion>
+
+<Accordion title="Forgetting to XOR final value">
+  **Problem:** Not inverting bits at the end
+  
+  **Solution:** XOR with 0xFFFFFFFF as the last step
+  
+  ```c
+  // Inside png_crc()
+  for (n = 0; n < len; n++) {
+      c = crc_table[(c ^ buf[n]) & 0xFF] ^ (c >> 8);
+  }
+  
+  // CRITICAL: Finalize
+  return c ^ 0xFFFFFFFF;
+  ```
+</Accordion>
+
+## Testing CRC implementation
+
+### Known CRC values
+
+Test your implementation with these known values:
+
+```c
+// "IEND" with no data
+uint8_t iend[] = {0x49, 0x45, 0x4E, 0x44};
+assert(png_crc(iend, 4) == 0xAE426082);
+
+// "IHDR" (just the type, not data)
+uint8_t ihdr[] = {0x49, 0x48, 0x44, 0x52};
+uint32_t result = png_crc(ihdr, 4);
+// Will differ based on actual IHDR data
+```
+
+### Validating real chunks
+
+```bash
+# Examine a PNG file
+$ hd tests/data/test.png | less
+
+# Find IEND chunk (usually at end)
+# Should see: 00 00 00 00 49 45 4E 44 AE 42 60 82
+#            |length=0| |IEND| |CRC=0xAE426082|
+```
+
+### Using the summary command
+
+```bash
+$ bin/png -f tests/data/test.png -s
+Chunk Summary for tests/data/test.png:
+  Chunk 0: Type=IHDR, Length=13, CRC=valid
+  Chunk 1: Type=PLTE, Length=504, CRC=valid
+  Chunk 2: Type=IDAT, Length=8192, CRC=valid
+  Chunk 3: Type=IEND, Length=0, CRC=valid
+```
+
+All CRCs should show "valid" for uncorrupted PNG files.
+
+## Performance considerations
+
+### Table computation
+
+- Build the lookup table once (use a static flag)
+- Don't rebuild it on every CRC call
+- Consider making it `const` after initialization
+
+### Memory allocation
+
+When combining type + data:
+
+```c
+// Option 1: Allocate temporary buffer (shown above)
+// Pro: Simple, clear
+// Con: Requires malloc/free
+
+// Option 2: Compute in two passes
+uint32_t compute_chunk_crc_no_alloc(const png_chunk_t *chunk) {
+    if (!table_computed) make_crc_table();
+    
+    uint32_t c = 0xFFFFFFFF;
+    
+    // Process type (4 bytes)
+    for (int i = 0; i < 4; i++) {
+        c = crc_table[(c ^ chunk->type[i]) & 0xFF] ^ (c >> 8);
+    }
+    
+    // Process data
+    for (uint32_t i = 0; i < chunk->length; i++) {
+        c = crc_table[(c ^ chunk->data[i]) & 0xFF] ^ (c >> 8);
+    }
+    
+    return c ^ 0xFFFFFFFF;
+}
+// Pro: No allocation
+// Con: Slightly less clear
+```
+
+## Reference
+
+For the complete CRC algorithm specification, see:
+
+- [PNG Specification - CRC Algorithm](https://www.libpng.org/pub/png/spec/1.2/PNG-Structure.html#CRC-algorithm)
+- [PNG Specification - Sample CRC Code](https://www.libpng.org/pub/png/spec/1.2/PNG-CRCAppendix.html)
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Steganography" icon="eye-slash" href="/png/steganography">
+    Learn LSB message encoding
+  </Card>
+  <Card title="CRC API" icon="code" href="/png/api/crc">
+    Review the CRC API reference
+  </Card>
+</CardGroup>

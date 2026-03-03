@@ -1,0 +1,461 @@
+---
+title: PNG steganography
+description: Hiding and extracting secret messages in PNG images using LSB encoding
+---
+
+## Overview
+
+Steganography is the practice of hiding information within other data in a way that is not easily detectable. For this assignment, you'll implement LSB (Least Significant Bit) steganography to hide text messages in PNG images.
+
+## What is LSB steganography?
+
+LSB steganography works by modifying the least significant bit of pixel data:
+
+<CardGroup cols={2}>
+  <Card title="Minimal visual impact" icon="eye">
+    Changing the LSB of a color value by ±1 is imperceptible
+  </Card>
+  <Card title="High capacity" icon="database">
+    One bit per pixel = width × height bits total
+  </Card>
+  <Card title="Simple encoding" icon="code">
+    Direct bit manipulation, no complex algorithms
+  </Card>
+  <Card title="Fragile" icon="warning">
+    Any re-compression or editing destroys the message
+  </Card>
+</CardGroup>
+
+### Example
+
+Original pixel (red channel): `11001011` (203)
+
+To encode a 0 bit: `11001010` (202) - changed from 203 to 202
+
+To encode a 1 bit: `11001011` (203) - no change needed
+
+The difference is visually undetectable.
+
+## Two encoding methods
+
+Your implementation must support two different encoding methods based on color type:
+
+### Method 1: Direct LSB (Non-palette images)
+
+For color types 0, 2, 4, 6 (grayscale, RGB, and alpha variants):
+
+- Modify the LSB of the **first channel** of each pixel
+- Grayscale: LSB of gray value
+- RGB: LSB of red channel
+- Grayscale+Alpha: LSB of gray value
+- RGB+Alpha: LSB of red channel
+
+**Encoding process:**
+
+<Steps>
+  <Step title="Get message bits">
+    Convert message string to bits (8 bits per character + null terminator)
+  </Step>
+  <Step title="Decompress image data">
+    Inflate all IDAT chunks to get raw pixel data
+  </Step>
+  <Step title="Unfilter scanlines">
+    Remove PNG filtering (support all 5 filter types)
+  </Step>
+  <Step title="Modify LSBs">
+    For each bit in the message, modify the LSB of the corresponding pixel's first channel
+  </Step>
+  <Step title="Re-filter and compress">
+    Apply filtering (can use type 0: None) and compress with zlib
+  </Step>
+  <Step title="Write output PNG">
+    Construct valid PNG with modified IDAT chunks
+  </Step>
+</Steps>
+
+### Method 2: Palette index swapping (Palette images)
+
+For color type 3 (indexed/palette images):
+
+<Warning>
+  Directly modifying palette indices can cause visible artifacts. Instead, use identical-color pairs.
+</Warning>
+
+**The clever solution:**
+
+1. Find or create pairs of identical colors in the palette
+2. Map each pair: lower index = 0 bit, higher index = 1 bit
+3. Swap pixel indices between pairs to encode bits
+4. Result is visually identical (same RGB values)
+
+**Example palette:**
+
+```
+Index 0: RGB(100, 150, 200)
+Index 1: RGB(50, 75, 100)
+Index 2: RGB(100, 150, 200)  ← Identical to index 0!
+```
+
+Pairs: {0, 2} (both are RGB(100, 150, 200))
+
+To encode a 0: Use index 0
+
+To encode a 1: Use index 2
+
+Image looks identical!
+
+**If no pairs exist:**
+
+Duplicate existing palette entries (up to 256 max):
+
+```c
+// Original palette has 100 colors
+// Duplicate each color:
+for (int i = 0; i < original_count && total < 256; i++) {
+    palette[original_count + i] = palette[i]; // Copy RGB
+    pair_map[i] = original_count + i;          // Record pair
+}
+```
+
+## API functions
+
+### png_embed_lsb()
+
+Encode a secret message into a PNG:
+
+```c
+int png_embed_lsb(const char *input_path, const char *message, 
+                  const char *output_path);
+```
+
+<ParamField path="input_path" type="const char*" required>
+  Path to source PNG file
+</ParamField>
+
+<ParamField path="message" type="const char*" required>
+  Message to hide (null-terminated string)
+</ParamField>
+
+<ParamField path="output_path" type="const char*" required>
+  Path for output PNG with hidden message
+</ParamField>
+
+**Returns:** 0 on success, -1 on error
+
+### png_extract_lsb()
+
+Extract a hidden message from a PNG:
+
+```c
+int png_extract_lsb(const char *input_path, char *buffer, size_t max_len);
+```
+
+<ParamField path="input_path" type="const char*" required>
+  Path to PNG with hidden message
+</ParamField>
+
+<ParamField path="buffer" type="char*" required>
+  Buffer to store extracted message
+</ParamField>
+
+<ParamField path="max_len" type="size_t" required>
+  Maximum buffer size (including null terminator)
+</ParamField>
+
+**Returns:** Length of extracted string (excluding null), or -1 on error
+
+## Implementation guide
+
+### Capacity calculation
+
+Before encoding, verify the message fits:
+
+```c
+// Get image dimensions
+png_ihdr_t ihdr;
+// ... extract IHDR ...
+
+// Calculate capacity in bits
+size_t capacity_bits = ihdr.width * ihdr.height;
+
+// Calculate required bits (including null terminator)
+size_t message_len = strlen(message);
+size_t required_bits = (message_len + 1) * 8; // +1 for '\0'
+
+if (required_bits > capacity_bits) {
+    // Message too long!
+    return -1;
+}
+```
+
+### Converting message to bits
+
+```c
+void get_bit(const char *message, size_t bit_index, int *out) {
+    size_t byte_index = bit_index / 8;
+    size_t bit_offset = bit_index % 8;
+    
+    uint8_t byte = (uint8_t)message[byte_index];
+    
+    // Extract bit (MSB first)
+    *out = (byte >> (7 - bit_offset)) & 1;
+}
+
+// Example usage:
+const char *msg = "Hi";
+// 'H' = 0x48 = 01001000
+// 'i' = 0x69 = 01101001
+// '\0' = 0x00 = 00000000
+
+int bit;
+get_bit(msg, 0, &bit); // bit = 0 (first bit of 'H')
+get_bit(msg, 1, &bit); // bit = 1 (second bit of 'H')
+get_bit(msg, 7, &bit); // bit = 0 (eighth bit of 'H')
+get_bit(msg, 8, &bit); // bit = 0 (first bit of 'i')
+```
+
+### Encoding bits (non-palette)
+
+```c
+// For each bit in the message:
+for (size_t i = 0; i < total_bits; i++) {
+    // Calculate pixel position
+    size_t y = i / ihdr.width;
+    size_t x = i % ihdr.width;
+    
+    // Calculate scanline offset (skip filter byte!)
+    size_t scanline_offset = y * (1 + ihdr.width * bytes_per_pixel);
+    size_t pixel_offset = scanline_offset + 1 + x * bytes_per_pixel;
+    
+    // Get bit to encode
+    int bit;
+    get_bit(message, i, &bit);
+    
+    // Modify LSB of first channel
+    if (bit) {
+        pixel_data[pixel_offset] |= 0x01;  // Set LSB to 1
+    } else {
+        pixel_data[pixel_offset] &= 0xFE;  // Set LSB to 0
+    }
+}
+```
+
+<Warning>
+  **Critical:** Never modify the filter byte at the start of each scanline!
+  
+  Scanline structure: `[filter_byte][pixel_0][pixel_1]...[pixel_width-1]`
+</Warning>
+
+### Encoding bits (palette)
+
+```c
+// Build pair mapping first
+int pair_map[256]; // pair_map[i] = index of pair for index i
+// ... build pair_map ...
+
+// For each bit in the message:
+for (size_t i = 0; i < total_bits; i++) {
+    size_t y = i / ihdr.width;
+    size_t x = i % ihdr.width;
+    
+    size_t scanline_offset = y * (1 + ihdr.width);
+    size_t pixel_offset = scanline_offset + 1 + x;
+    
+    uint8_t current_index = pixel_data[pixel_offset];
+    
+    // Skip if this index has no pair
+    if (pair_map[current_index] == -1) {
+        continue; // or return error
+    }
+    
+    int bit;
+    get_bit(message, i, &bit);
+    
+    // Get the pair indices
+    uint8_t idx0 = current_index;
+    uint8_t idx1 = pair_map[current_index];
+    
+    // Ensure idx0 < idx1
+    if (idx0 > idx1) {
+        uint8_t temp = idx0;
+        idx0 = idx1;
+        idx1 = temp;
+    }
+    
+    // 0 bit = lower index, 1 bit = higher index
+    pixel_data[pixel_offset] = bit ? idx1 : idx0;
+}
+```
+
+### Decoding bits
+
+Extraction is the reverse process:
+
+```c
+char buffer[1024];
+size_t bits_read = 0;
+size_t bytes_written = 0;
+uint8_t current_byte = 0;
+
+// Read until null terminator
+for (size_t i = 0; i < capacity_bits; i++) {
+    // Get pixel position and extract LSB
+    size_t y = i / ihdr.width;
+    size_t x = i % ihdr.width;
+    size_t offset = y * (1 + ihdr.width * bpp) + 1 + x * bpp;
+    
+    int bit = pixel_data[offset] & 1;
+    
+    // Build byte (MSB first)
+    current_byte = (current_byte << 1) | bit;
+    bits_read++;
+    
+    if (bits_read == 8) {
+        buffer[bytes_written++] = current_byte;
+        
+        // Check for null terminator
+        if (current_byte == '\0') {
+            return bytes_written - 1; // Don't count null
+        }
+        
+        current_byte = 0;
+        bits_read = 0;
+    }
+}
+
+return -1; // No null terminator found
+```
+
+## Constraints and requirements
+
+### Bit depth restriction
+
+<Note>
+  Only 8-bit images are supported (`bit_depth == 8`).
+</Note>
+
+Reject images with other bit depths:
+
+```c
+if (ihdr.bit_depth != 8) {
+    return -1;
+}
+```
+
+### Filter byte handling
+
+**Structure of uncompressed image data:**
+
+```
+Scanline 0: [filter_type_0][pixel_0][pixel_1]...[pixel_width-1]
+Scanline 1: [filter_type_1][pixel_0][pixel_1]...[pixel_width-1]
+...
+```
+
+Always skip the filter byte:
+
+```c
+// WRONG: Treats filter byte as a pixel
+for (size_t i = 0; i < width * height; i++) {
+    pixel_data[i] ...
+}
+
+// CORRECT: Skips filter bytes
+for (size_t y = 0; y < height; y++) {
+    size_t scanline_start = y * (1 + width * bpp);
+    for (size_t x = 0; x < width; x++) {
+        size_t offset = scanline_start + 1 + x * bpp;
+        pixel_data[offset] ...
+    }
+}
+```
+
+### Compression requirements
+
+When writing the output PNG:
+
+```c
+// Use PNG-compatible zlib settings
+size_t compressed_size;
+uint8_t *compressed = util_deflate_data_png(
+    filtered_data, data_size, &compressed_size
+);
+```
+
+The `util_deflate_data_png()` function uses `windowBits=15` for PNG compatibility.
+
+## Testing steganography
+
+### Basic test
+
+```bash
+# Encode a message
+$ bin/png -f tests/data/image.png -e "Hello, World!" -o encoded.png
+Message encoded successfully to encoded.png
+
+# Decode the message
+$ bin/png -f encoded.png -d
+Hidden message: Hello, World!
+```
+
+### Verify visual identity
+
+```bash
+# The images should look identical
+$ open tests/data/image.png
+$ open encoded.png
+
+# But have different file sizes (slightly)
+$ ls -lh tests/data/image.png encoded.png
+```
+
+### Maximum capacity test
+
+```c
+// For a 320x320 image:
+// Capacity = 320 * 320 = 102,400 bits = 12,800 bytes
+
+char huge_message[12799]; // 12,799 + null = 12,800
+memset(huge_message, 'A', 12798);
+huge_message[12798] = '\0';
+
+int result = png_embed_lsb("image.png", huge_message, "out.png");
+assert(result == 0); // Should succeed
+
+char too_big[12800];
+memset(too_big, 'A', 12799);
+too_big[12799] = '\0';
+
+result = png_embed_lsb("image.png", too_big, "out.png");
+assert(result == -1); // Should fail (too long)
+```
+
+## Security considerations
+
+<Warning>
+  This steganography method is **not secure** against:
+  - Statistical analysis
+  - Re-compression or format conversion
+  - Intentional steganalysis
+  - Cropping or resizing
+</Warning>
+
+It's suitable for:
+- Demonstrating the concept
+- Casual hiding of messages
+- Educational purposes
+
+Not suitable for:
+- Actual secret communication
+- Security-critical applications
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Image overlay" icon="layer-group" href="/png/image-overlay">
+    Learn image compositing
+  </Card>
+  <Card title="Steg API" icon="code" href="/png/api/steg">
+    Review steganography API
+  </Card>
+</CardGroup>

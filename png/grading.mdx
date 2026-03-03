@@ -1,0 +1,363 @@
+---
+title: Grading criteria
+description: How the PNG homework assignment will be graded
+---
+
+## Grading overview
+
+Your PNG homework will be evaluated based on:
+
+<CardGroup cols={2}>
+  <Card title="Functionality" icon="check-circle">
+    Correctness of implementation (70%)
+  </Card>
+  <Card title="Code quality" icon="code">
+    Style, organization, and clarity (15%)
+  </Card>
+  <Card title="Output format" icon="terminal">
+    Exact match to specifications (10%)
+  </Card>
+  <Card title="Testing" icon="vial">
+    Unit test coverage (5%)
+  </Card>
+</CardGroup>
+
+## Testing approach
+
+### Provided tests vs. grading tests
+
+<Warning>
+  **Critical:** The tests in your template repository are NOT the same as the grading tests.
+</Warning>
+
+The provided tests are meant to:
+- Help you check basic functionality
+- Ensure your output formatting matches the specification  
+- Show you if your code compiles
+- Give you examples of how to write Criterion tests
+
+The **actual grading tests** will:
+- Test more edge cases and error conditions
+- Use different PNG files not in your test data
+- Check boundary conditions more thoroughly
+- Verify memory management with Valgrind
+- Test combinations of operations
+
+### CodeGrade integration
+
+<Steps>
+  <Step title="Push to repository">
+    Every `git push` triggers automated testing on CodeGrade
+  </Step>
+  <Step title="View results">
+    Check CodeGrade for compilation status and basic test results
+  </Step>
+  <Step title="Iterate">
+    Use feedback to fix issues and push again
+  </Step>
+  <Step title="Final grading">
+    After the deadline, comprehensive grading tests run
+  </Step>
+</Steps>
+
+<Note>
+  CodeGrade shows you if your code compiles and passes basic tests, but the real grade comes from tests run after the deadline.
+</Note>
+
+## Functional requirements (70%)
+
+### Part 1: CLI arguments (15%)
+
+- Two-pass argument validation
+- Correct handling of all flags
+- Proper error messages for invalid arguments
+- Support for multiple operations in one invocation
+- Optional arguments with defaults
+
+**Test categories:**
+- Help flag (-h) works correctly
+- Missing required -f flag detected
+- Unknown flags rejected
+- Missing arguments for flags detected
+- Multiple operations executed in order
+
+### Part 2: PNG parsing (25%)
+
+- PNG signature validation
+- Chunk reading with length and type
+- CRC-32 computation and validation
+- IHDR parsing (all fields correct)
+- PLTE parsing (RGB values extracted)
+- Big-endian to native conversion
+- Memory allocation and deallocation
+
+**Test categories:**
+- Open valid/invalid PNG files
+- Read chunks of various sizes
+- Detect CRC mismatches
+- Parse IHDR correctly
+- Parse PLTE with various color counts
+- Handle missing chunks gracefully
+- No memory leaks
+
+### Part 3: Steganography (15%)
+
+- LSB encoding for non-palette images
+- Palette-based encoding for color type 3
+- Message extraction/decoding
+- Capacity calculation
+- Message too long detection
+- Null terminator handling
+- Filter byte preservation
+
+**Test categories:**
+- Encode/decode in grayscale images
+- Encode/decode in RGB images  
+- Encode/decode in palette images
+- Handle maximum-length messages
+- Reject messages that don't fit
+- Decode produces original message
+- Output is valid PNG
+
+### Part 4: Image overlay (15%)
+
+- Palette merging
+- Index remapping
+- PNG filter handling (all 5 types)
+- Pixel pasting at coordinates
+- Boundary clipping
+- IDAT compression/decompression
+- Chunk structure preservation
+
+**Test categories:**
+- Overlay compatible images
+- Handle offset positioning
+- Merge palettes correctly
+- Unfilter all filter types
+- Clip at image boundaries
+- Preserve ancillary chunks
+- Output is valid PNG
+
+## Output format (10%)
+
+<Warning>
+  **Extremely important:** Your program must produce EXACTLY the specified output.
+</Warning>
+
+### What gets checked
+
+- Exact string matching for all output
+- Correct usage of macros from `global.h`
+- stdout vs. stderr (errors go to stderr)
+- No extraneous output in normal operation  
+- Correct exit codes (0 for success, 1 for failure)
+
+### Common mistakes
+
+<Accordion title="Adding extra debugging output">
+  **Problem:** Printing debug messages without using the `debug()` macro
+  
+  **Solution:** Use `debug()` for all debugging output - it's disabled in release builds
+  
+  ```c
+  // WRONG
+  printf("Reading chunk...\n");
+  
+  // CORRECT  
+  debug("Reading chunk...\n");
+  ```
+</Accordion>
+
+<Accordion title="Incorrect string formatting">
+  **Problem:** Not using the provided macros or formatting incorrectly
+  
+  **Solution:** Always use the macros from `global.h`
+  
+  ```c
+  // WRONG
+  printf("Chunk %d: Type=%s\n", i, chunk.type);
+  
+  // CORRECT
+  PRINT_CHUNK_INFO(i, chunk);
+  ```
+</Accordion>
+
+<Accordion title="Writing errors to stdout">
+  **Problem:** Error messages go to stdout instead of stderr
+  
+  **Solution:** Use the error macros which write to stderr
+  
+  ```c
+  // WRONG
+  printf("Error: File not found\n");
+  
+  // CORRECT
+  PRINT_ERROR_OPEN_FILE(filename);
+  ```
+</Accordion>
+
+## Code quality (15%)
+
+### Code organization
+
+- No functions in `main.c` except `main()`
+- Logical file organization
+- Appropriate use of helper functions
+- No duplicate code
+
+### Style
+
+- Consistent indentation and formatting
+- Meaningful variable and function names
+- Comments for complex logic
+- No magic numbers (use named constants)
+
+### Error handling
+
+- Check all function return values
+- Validate parameters (NULL checks, bounds checks)
+- Clean up resources on error paths
+- Informative error messages
+
+### Memory management
+
+- All `malloc`/`calloc` calls checked for NULL
+- All allocated memory eventually freed
+- No leaks (tested with Valgrind)
+- No use-after-free or double-free
+
+## Testing coverage (5%)
+
+While not required, writing your own tests demonstrates:
+- Understanding of the assignment
+- Thoroughness in validation
+- Good software engineering practices
+
+Bonus points for:
+- Comprehensive test coverage
+- Edge case testing
+- Well-documented tests
+
+## Memory leak detection
+
+<Note>
+  Your program will be tested with Valgrind to detect memory errors.
+</Note>
+
+### What gets checked
+
+- Memory leaks (allocated but not freed)
+- Invalid reads/writes (out of bounds)
+- Use of uninitialized memory
+- Use after free
+- Double free
+
+### Testing with Valgrind
+
+```bash
+# Build with debug symbols
+make debug
+
+# Run with Valgrind
+valgrind --leak-check=full --show-leak-kinds=all \
+  bin/png -f tests/data/test.png -s
+
+# Should report:
+# "All heap blocks were freed -- no leaks are possible"
+```
+
+See the [Debugging](/debugging) page for more Valgrind usage.
+
+## Partial credit
+
+You can receive partial credit for:
+
+**Part 2 (PNG parsing):**
+- If you correctly implement the PNG parsing functions, you'll get most of the points for Part 2 even if other parts don't work
+- Unit tests focus on individual functions
+
+**Part 3 & 4:**
+- Partial implementations may receive partial credit
+- For example, steganography that works only for non-palette images
+- Or overlay that doesn't handle all filter types
+
+<Tip>
+  Focus on completing one part well before moving to the next. A fully working Part 2 is better than half-finished Parts 2, 3, and 4.
+</Tip>
+
+## Common mistakes to avoid
+
+### Compilation errors
+
+- **Test both build modes:** `make clean all` AND `make clean debug`
+- Certain errors only appear in one mode
+- Missing includes, linking errors, etc.
+
+### Off-by-one errors
+
+- Buffer sizes (allocate space for null terminator)
+- Array indexing (0-based vs 1-based)
+- Loop bounds (`<` vs `<=`)
+
+### Endianness bugs
+
+- PNG uses big-endian for multi-byte integers
+- x64 is little-endian
+- Must convert all length, width, height, CRC values
+
+### Filter byte handling
+
+- First byte of each scanline is a filter type
+- Never modify it during steganography
+- Must skip it when reading/writing pixel data
+- Required for correct overlay unfiltering
+
+### Memory errors
+
+- Not checking malloc return values
+- Forgetting to free allocated memory
+- Freeing stack memory
+- Double freeing heap memory
+
+## Submission checklist
+
+Before submitting, verify:
+
+- [ ] Code compiles with `make clean all`
+- [ ] Code compiles with `make clean debug`
+- [ ] All provided tests pass
+- [ ] No memory leaks reported by Valgrind
+- [ ] Output matches specifications exactly
+- [ ] No "DO NOT MODIFY" files were modified
+- [ ] All functions are in appropriate source files
+- [ ] `main.c` contains only includes, defines, and main()
+- [ ] CodeGrade shows successful compilation
+- [ ] You've tested with various PNG files
+
+## Getting maximum credit
+
+To maximize your grade:
+
+1. **Start early** - Don't wait until the last week
+2. **Test incrementally** - Test each function as you write it
+3. **Read the spec** - Understand the PNG format thoroughly
+4. **Use the tools** - `hd`, `gdb`, `valgrind` are your friends
+5. **Write tests** - Don't rely only on provided tests
+6. **Check output** - Use diff to compare your output
+7. **Handle errors** - Check all return values
+8. **Free memory** - Use Valgrind to find leaks
+9. **Ask questions** - Use Piazza and office hours
+10. **Submit early** - Test on CodeGrade before the deadline
+
+## Grade dispute policy
+
+If you believe your grade is incorrect:
+
+1. Review the CodeGrade feedback carefully
+2. Test your code locally to reproduce issues
+3. If you still believe there's an error, contact the instructor
+4. Provide specific test cases that demonstrate the issue
+
+<Note>
+  "It works on my machine" is not sufficient. You must be able to reproduce the expected behavior on the grading system.
+</Note>

@@ -1,0 +1,566 @@
+---
+title: "INFLATE Decompression"
+description: "Implementing the INFLATE decompression algorithm"
+---
+
+## Overview
+
+INFLATE is the decompression algorithm that reverses the DEFLATE compression process. It reads compressed GZIP data and reconstructs the original uncompressed data.
+
+The INFLATE algorithm is specified in [RFC 1951](http://tools.ietf.org/html/rfc1951).
+
+## INFLATE Function
+
+From `our_zlib.h:69`:
+
+```c
+char* inflate(char* bytes, size_t comp_len)
+```
+
+**Parameters:**
+- `bytes` - Pointer to compressed data (after GZIP header, before footer)
+- `comp_len` - Length of compressed data in bytes
+
+**Returns:**
+- A malloc'd buffer containing decompressed data
+- `NULL` on error (NULL pointers, malformed data, etc.)
+
+<Note>
+The decompressed size is stored in the GZIP footer (`full_size` field). The caller should read the footer to know how much data to expect.
+</Note>
+
+<Warning>
+The returned buffer is malloc'd. The caller is responsible for freeing it.
+</Warning>
+
+## INFLATE Algorithm
+
+The INFLATE decompression process:
+
+<Steps>
+  <Step title="Initialize output buffer">
+    Allocate buffer for decompressed data
+  </Step>
+  
+  <Step title="Process each block">
+    Read block header and determine block type
+  </Step>
+  
+  <Step title="Decompress based on block type">
+    - Type 00: Copy uncompressed data
+    - Type 01: Decode with fixed Huffman codes
+    - Type 10: Decode with dynamic Huffman codes
+    - Type 11: Error (reserved)
+  </Step>
+  
+  <Step title="Continue until BFINAL">
+    Keep processing blocks until BFINAL = 1
+  </Step>
+  
+  <Step title="Return decompressed data">
+    Return the complete decompressed buffer
+  </Step>
+</Steps>
+
+## INFLATE Flowchart
+
+From README lines 648-726:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ INPUT: Compressed block data                                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │  Check BTYPE    │
+                    └─────────────────┘
+                       │            │
+           BTYPE = 01  │            │  BTYPE = 10
+          (Fixed)      │            │  (Dynamic)
+                       │            │
+                       ▼            ▼
+          ┌─────────────────┐   ┌──────────────────────────────┐
+          │ Use fixed      │   │ Read dynamic Huffman trees │
+          │ Huffman codes  │   │ from block header          │
+          └─────────────────┘   └──────────────────────────────┘
+                                               │
+                                   ┌────────────┘
+                                   │
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │ Decode Huffman symbols      │
+                    │ until end-of-block (256)    │
+                    └──────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│          PROCESS EACH SYMBOL:                                  │
+│   0-255:   Output literal byte                                 │
+│   256:     End of block, STOP                                  │
+│   257-285: Decode length, decode distance, perform LZ77 copy   │
+└─────────────────────────────────────────────────────────────────┘
+
+OUTPUT: Decompressed data stream
+```
+
+## Block Processing
+
+### Reading Block Header
+
+From README lines 447-456:
+
+```c
+// Read 3-bit block header
+int bfinal = read_bit(data, &bit_pos);
+int btype = read_bits(data, &bit_pos, 2);
+
+if (btype == 3) {
+    return NULL;  // Reserved block type - error
+}
+```
+
+### Block Type 00: Uncompressed
+
+From README lines 458-459:
+
+```c
+if (btype == BT_NO_COMPRESSION) {
+    // Skip to byte boundary
+    bit_pos = (bit_pos + 7) & ~7;
+    
+    // Read LEN (2 bytes, little-endian)
+    unsigned short len = read_16_le(data, &bit_pos);
+    
+    // Read NLEN (2 bytes, little-endian) - one's complement of LEN
+    unsigned short nlen = read_16_le(data, &bit_pos);
+    
+    // Verify: LEN XOR NLEN should be 0xFFFF
+    if ((len ^ nlen) != 0xFFFF) {
+        return NULL;  // Corrupted block
+    }
+    
+    // Copy LEN bytes directly to output
+    memcpy(output + output_pos, data + bit_pos/8, len);
+    output_pos += len;
+    bit_pos += len * 8;
+}
+```
+
+### Block Type 01: Fixed Huffman
+
+From README lines 460-477:
+
+Use predefined Huffman codes:
+
+```c
+if (btype == BT_STATIC) {
+    // Set up fixed Huffman decoders
+    huff_decoder_t lit_decoder, dist_decoder;
+    setup_fixed_huffman_decoders(&lit_decoder, &dist_decoder);
+    
+    // Decode symbols
+    decode_huffman_block(data, &bit_pos, &lit_decoder, &dist_decoder,
+                        output, &output_pos, NULL, 0);
+}
+```
+
+Fixed codes:
+- **Literals 0-143:** 8 bits, codes `00110000` - `10111111`
+- **Literals 144-255:** 9 bits, codes `110010000` - `111111111`
+- **Length codes 256-279:** 7 bits, codes `0000000` - `0010111`
+- **Length codes 280-287:** 8 bits, codes `11000000` - `11000111`
+- **Distance codes 0-29:** 5 bits, codes `00000` - `11101`
+
+### Block Type 10: Dynamic Huffman
+
+From README lines 479-506:
+
+Read Huffman trees from the block:
+
+```c
+if (btype == BT_DYNAMIC) {
+    // Read HLIT (5 bits) - number of literal/length codes - 257
+    int hlit = read_bits(data, &bit_pos, 5);
+    int num_lit_codes = hlit + 257;
+    
+    // Read HDIST (5 bits) - number of distance codes - 1
+    int hdist = read_bits(data, &bit_pos, 5);
+    int num_dist_codes = hdist + 1;
+    
+    // Read HCLEN (4 bits) - number of code length codes - 4
+    int hclen = read_bits(data, &bit_pos, 4);
+    int num_codelen_codes = hclen + 4;
+    
+    // Read code lengths for the code length alphabet
+    // (in the order: 16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15)
+    unsigned char codelen_lens[19] = {0};
+    int order[] = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15};
+    for (int i = 0; i < num_codelen_codes; i++) {
+        codelen_lens[order[i]] = read_bits(data, &bit_pos, 3);
+    }
+    
+    // Build code length decoder
+    huff_decoder_t codelen_decoder;
+    build_decoder(&codelen_decoder, codelen_lens, 19);
+    
+    // Decode literal/length code lengths
+    unsigned char lit_lens[286] = {0};
+    decode_code_lengths(data, &bit_pos, &codelen_decoder, 
+                        lit_lens, num_lit_codes);
+    
+    // Decode distance code lengths
+    unsigned char dist_lens[30] = {0};
+    decode_code_lengths(data, &bit_pos, &codelen_decoder,
+                        dist_lens, num_dist_codes);
+    
+    // Build literal/length and distance decoders
+    huff_decoder_t lit_decoder, dist_decoder;
+    build_decoder(&lit_decoder, lit_lens, num_lit_codes);
+    build_decoder(&dist_decoder, dist_lens, num_dist_codes);
+    
+    // Decode symbols
+    decode_huffman_block(data, &bit_pos, &lit_decoder, &dist_decoder,
+                        output, &output_pos, NULL, 0);
+}
+```
+
+## Decoding Code Lengths
+
+From README lines 729-869:
+
+Code length symbols have special meanings:
+
+```c
+void decode_code_lengths(const unsigned char* data, 
+                         unsigned long* bit_pos,
+                         huff_decoder_t* decoder,
+                         unsigned char* lens,
+                         int num_codes) {
+    int i = 0;
+    while (i < num_codes) {
+        int symbol = decode_symbol(decoder, data, bit_pos);
+        
+        if (symbol <= 15) {
+            // Literal code length
+            lens[i++] = symbol;
+        } else if (symbol == 16) {
+            // Repeat previous code length 3-6 times
+            int repeat = 3 + read_bits(data, bit_pos, 2);
+            unsigned char prev = lens[i - 1];
+            for (int j = 0; j < repeat; j++) {
+                lens[i++] = prev;
+            }
+        } else if (symbol == 17) {
+            // Repeat 0 for 3-10 times
+            int repeat = 3 + read_bits(data, bit_pos, 3);
+            for (int j = 0; j < repeat; j++) {
+                lens[i++] = 0;
+            }
+        } else if (symbol == 18) {
+            // Repeat 0 for 11-138 times
+            int repeat = 11 + read_bits(data, bit_pos, 7);
+            for (int j = 0; j < repeat; j++) {
+                lens[i++] = 0;
+            }
+        } else {
+            // Invalid symbol
+            return;  // Error
+        }
+    }
+}
+```
+
+## Decoding Huffman Symbols
+
+The main decoding loop:
+
+```c
+void decode_huffman_block(const unsigned char* data,
+                          unsigned long* bit_pos,
+                          huff_decoder_t* lit_decoder,
+                          huff_decoder_t* dist_decoder,
+                          unsigned char* output,
+                          size_t* output_pos,
+                          const unsigned char* history,
+                          size_t history_len) {
+    while (1) {
+        // Decode next literal/length symbol
+        int symbol = decode_symbol(lit_decoder, data, bit_pos);
+        
+        if (symbol < 0) {
+            // Decode error
+            return;
+        } else if (symbol < 256) {
+            // Literal byte
+            output[(*output_pos)++] = (unsigned char)symbol;
+        } else if (symbol == 256) {
+            // End of block
+            break;
+        } else if (symbol <= 285) {
+            // Length/distance pair
+            
+            // Decode length
+            int length = decode_length(symbol, data, bit_pos);
+            
+            // Decode distance
+            int dist_code = decode_symbol(dist_decoder, data, bit_pos);
+            
+            if (dist_code == 30 || dist_code == 31) {
+                // Invalid distance code
+                return;  // Error
+            }
+            
+            int distance = decode_distance(dist_code, data, bit_pos);
+            
+            // Perform LZ77 copy
+            for (int i = 0; i < length; i++) {
+                if (distance <= *output_pos) {
+                    // Copy from current output
+                    output[*output_pos] = output[*output_pos - distance];
+                } else if (history) {
+                    // Copy from history
+                    size_t hist_pos = history_len - (distance - *output_pos);
+                    output[*output_pos] = history[hist_pos];
+                } else {
+                    // Error: reference beyond available data
+                    return;
+                }
+                (*output_pos)++;
+            }
+        } else {
+            // Invalid symbol
+            return;  // Error
+        }
+    }
+}
+```
+
+## Decoding Lengths and Distances
+
+Use the tables from README lines 404-430:
+
+```c
+int decode_length(int code, const unsigned char* data, unsigned long* bit_pos) {
+    // Base lengths for codes 257-285
+    static const int base_lengths[] = {
+        3, 4, 5, 6, 7, 8, 9, 10,  // 257-264
+        11, 13, 15, 17,            // 265-268
+        19, 23, 27, 31,            // 269-272
+        35, 43, 51, 59,            // 273-276
+        67, 83, 99, 115,           // 277-280
+        131, 163, 195, 227,        // 281-284
+        258                        // 285
+    };
+    
+    // Extra bits for each code
+    static const int extra_bits[] = {
+        0, 0, 0, 0, 0, 0, 0, 0,    // 257-264
+        1, 1, 1, 1,                // 265-268
+        2, 2, 2, 2,                // 269-272
+        3, 3, 3, 3,                // 273-276
+        4, 4, 4, 4,                // 277-280
+        5, 5, 5, 5,                // 281-284
+        0                          // 285
+    };
+    
+    int idx = code - 257;
+    int length = base_lengths[idx];
+    int extra = read_bits(data, bit_pos, extra_bits[idx]);
+    return length + extra;
+}
+
+int decode_distance(int code, const unsigned char* data, unsigned long* bit_pos) {
+    // Similar table lookup for distances
+    static const int base_distances[] = {
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193,
+        257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145,
+        8193, 12289, 16385, 24577
+    };
+    
+    static const int extra_bits[] = {
+        0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+        7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13
+    };
+    
+    int distance = base_distances[code];
+    int extra = read_bits(data, bit_pos, extra_bits[code]);
+    return distance + extra;
+}
+```
+
+## Complete Implementation Outline
+
+```c
+char* inflate(char* bytes, size_t comp_len) {
+    if (!bytes || comp_len == 0) return NULL;
+    
+    // Allocate output buffer (start with reasonable size)
+    size_t output_capacity = 65536;
+    unsigned char* output = malloc(output_capacity);
+    if (!output) return NULL;
+    
+    size_t output_pos = 0;
+    unsigned long bit_pos = 0;
+    int bfinal = 0;
+    
+    // Process blocks until BFINAL = 1
+    while (!bfinal) {
+        // Read block header
+        bfinal = read_bit((unsigned char*)bytes, &bit_pos);
+        int btype = read_bits((unsigned char*)bytes, &bit_pos, 2);
+        
+        if (btype == 3) {
+            free(output);
+            return NULL;  // Reserved block type
+        }
+        
+        // Ensure buffer has space
+        while (output_pos + 65536 > output_capacity) {
+            output_capacity *= 2;
+            output = realloc(output, output_capacity);
+        }
+        
+        if (btype == BT_NO_COMPRESSION) {
+            // Handle uncompressed block
+            // ... (see above)
+        } else {
+            // Handle Huffman-compressed block
+            unsigned char* block_output = huffman_decode(
+                (unsigned char*)bytes, comp_len, btype, &bit_pos,
+                &output_pos, output, output_pos);
+            
+            if (!block_output) {
+                free(output);
+                return NULL;
+            }
+            // Data already written to output via output_pos
+        }
+    }
+    
+    // Resize to actual size
+    output = realloc(output, output_pos);
+    return (char*)output;
+}
+```
+
+## Error Handling
+
+Return `NULL` if:
+
+- `bytes` is NULL
+- `comp_len` is 0
+- Block type is 3 (reserved)
+- Invalid Huffman codes
+- Distance codes 30 or 31
+- LEN/NLEN mismatch in uncompressed block
+- Invalid code length sequences
+- Premature end of data
+- Memory allocation fails
+- Distance exceeds available data
+
+## Testing INFLATE
+
+### Test Cases
+
+<Accordion title="Uncompressed Block">
+Create a file with BTYPE=00 and verify decompression
+</Accordion>
+
+<Accordion title="Fixed Huffman Block">
+Compress data with static Huffman and decompress
+</Accordion>
+
+<Accordion title="Dynamic Huffman Block">
+Compress data with dynamic Huffman and decompress
+</Accordion>
+
+<Accordion title="Multi-Block File">
+Create file with 3 blocks, verify all are decompressed
+</Accordion>
+
+<Accordion title="Cross-Block References">
+Test LZ77 matches that reference previous blocks
+</Accordion>
+
+<Accordion title="Wrap-Around Case">
+Test distance < length (run-length encoding)
+</Accordion>
+
+### Validation
+
+```bash
+# Compress with standard gzip
+gzip -c input.txt > test.gz
+
+# Decompress with your program
+./bin/png -i test.gz -d -o output.txt
+
+# Compare
+diff input.txt output.txt
+```
+
+## Implementation Reference
+
+See `main.c:141-187` for how `inflate()` is called:
+
+```c
+case M_INFLATE: {
+    // Skip to compressed data
+    skip_gz_header_to_compressed_data(file, &info);
+    
+    // Read compressed data (excluding 8-byte footer)
+    size_t comp_len = (size_t)(file_size - 8 - ftell(file));
+    char* comp_buf = malloc(comp_len);
+    fread(comp_buf, 1, comp_len, file);
+    
+    // Decompress
+    char* out_buf = inflate(comp_buf, comp_len);
+    free(comp_buf);
+    
+    if (!out_buf) {
+        return 1;  // Error
+    }
+    
+    // Write decompressed data
+    FILE* out = fopen(output_filename, "wb");
+    fwrite(out_buf, 1, info.full_size, out);
+    fclose(out);
+    free(out_buf);
+    break;
+}
+```
+
+## Memory Management
+
+<Warning>
+Free all intermediate buffers:
+- Huffman decoders
+- Code length tables
+- Temporary buffers
+
+The caller must free the returned buffer.
+</Warning>
+
+## Summary
+
+Key INFLATE implementation points:
+
+- Process blocks until BFINAL = 1
+- Handle three block types: uncompressed, fixed Huffman, dynamic Huffman
+- Reserved block type (11) is an error
+- Read dynamic Huffman trees from block header
+- Decode code lengths with special symbols (16, 17, 18)
+- Perform LZ77 decompression during Huffman decoding
+- Reject distance codes 30 and 31
+- Handle cross-block references with history buffer
+- Handle wrap-around (distance < length)
+- Return malloc'd buffer
+- Handle all error cases
+
+## Next Steps
+
+- [DEFLATE](/zlib/deflate) - Compression algorithm
+- [Huffman Implementation](/zlib/huffman-implementation) - Huffman decoding details
+- [LZ77 Implementation](/zlib/lz77-implementation) - LZ77 decompression details
+- [GZIP Format](/zlib/gzip-format) - File format specification

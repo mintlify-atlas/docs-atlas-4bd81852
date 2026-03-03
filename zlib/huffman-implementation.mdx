@@ -1,0 +1,753 @@
+---
+title: "Huffman Implementation"
+description: "Implementing Huffman encoding and decoding functions"
+---
+
+## Overview
+
+This page covers the implementation of Huffman coding in `huff.c`. Huffman coding is the second compression layer in DEFLATE and the first decompression layer in INFLATE.
+
+## Required Functions
+
+You must implement in `huff.c`:
+
+### Encoding Functions
+
+```c
+unsigned char* huffman_encode_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len, 
+    unsigned char *returned_btype)
+```
+
+```c
+static unsigned char* encode_dynamic_huffman_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len)
+```
+
+```c
+static unsigned char* encode_fixed_huffman_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len)
+```
+
+### Decoding Function
+
+```c
+unsigned char* huffman_decode(
+    const unsigned char* data, 
+    size_t enc_len, 
+    unsigned int btype_val, 
+    unsigned long *bits_read, 
+    size_t* out_len, 
+    const unsigned char* history, 
+    size_t history_len)
+```
+
+## Data Structures
+
+### Huffman Tree Node
+
+From README line 272-278:
+
+```c
+typedef struct huff_node {
+    struct huff_node* left;   // Left child (0 bit)
+    struct huff_node* right;  // Right child (1 bit)
+    int symbol;               // Symbol value (-1 for internal nodes)
+    unsigned long freq;       // Frequency count
+} huff_node_t;
+```
+
+### Decoder Structure
+
+For efficient decoding:
+
+```c
+typedef struct {
+    int* symbols;    // Symbol lookup table
+    int* counts;     // Count of codes per length
+    int* offsets;    // Offset into symbols for each length
+} huff_decoder_t;
+```
+
+## Encoding Implementation
+
+### Main Encoding Function
+
+```c
+unsigned char* huffman_encode_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len, 
+    unsigned char *returned_btype)
+```
+
+**Parameters:**
+- `tokens` - Array of LZ77 tokens to encode
+- `num_tokens` - Number of tokens
+- `bits_written` - Output: number of bits written
+- `out_len` - Output: number of bytes allocated
+- `returned_btype` - Output: block type used (1=static, 2=dynamic)
+
+**Returns:**
+- Malloc'd buffer containing Huffman-encoded data
+- `NULL` on error
+
+**Algorithm:**
+
+<Steps>
+  <Step title="Validate inputs">
+    Check for NULL pointers, invalid token data
+  </Step>
+  
+  <Step title="Try both encodings">
+    Encode with both static and dynamic Huffman
+  </Step>
+  
+  <Step title="Choose best encoding">
+    Compare sizes and use the smaller one
+  </Step>
+  
+  <Step title="Return result">
+    Set returned_btype and return the chosen encoding
+  </Step>
+</Steps>
+
+**Pseudocode:**
+
+```c
+unsigned char* huffman_encode_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len, 
+    unsigned char *returned_btype) {
+    
+    // Validate inputs
+    if (!tokens || !bits_written || !out_len || !returned_btype) {
+        return NULL;
+    }
+    
+    // Try static Huffman
+    unsigned long static_bits = 0;
+    size_t static_len = 0;
+    unsigned char* static_result = encode_fixed_huffman_tokens(
+        tokens, num_tokens, &static_bits, &static_len);
+    
+    // Try dynamic Huffman
+    unsigned long dynamic_bits = 0;
+    size_t dynamic_len = 0;
+    unsigned char* dynamic_result = encode_dynamic_huffman_tokens(
+        tokens, num_tokens, &dynamic_bits, &dynamic_len);
+    
+    // Choose the better option
+    if (dynamic_bits < static_bits && dynamic_result) {
+        *bits_written = dynamic_bits;
+        *out_len = dynamic_len;
+        *returned_btype = BT_DYNAMIC;  // 2
+        free(static_result);
+        return dynamic_result;
+    } else {
+        *bits_written = static_bits;
+        *out_len = static_len;
+        *returned_btype = BT_STATIC;   // 1
+        free(dynamic_result);
+        return static_result;
+    }
+}
+```
+
+### Static Huffman Encoding
+
+```c
+static unsigned char* encode_fixed_huffman_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len)
+```
+
+**Algorithm:**
+
+<Steps>
+  <Step title="Set up predefined codes">
+    Use the fixed codes from RFC 1951
+  </Step>
+  
+  <Step title="Allocate output buffer">
+    Estimate size and allocate buffer
+  </Step>
+  
+  <Step title="Encode each token">
+    Convert LZ77 tokens to Huffman codes
+  </Step>
+  
+  <Step title="Write end-of-block">
+    Write symbol 256
+  </Step>
+</Steps>
+
+**Fixed Code Tables:**
+
+From README lines 467-477 and `our_zlib.h:37-48`:
+
+```c
+// Literal/length codes
+// 0-143: 8 bits, codes 00110000 - 10111111
+// 144-255: 9 bits, codes 110010000 - 111111111  
+// 256-279: 7 bits, codes 0000000 - 0010111
+// 280-287: 8 bits, codes 11000000 - 11000111
+
+// Distance codes (all 5 bits)
+// 0-29: codes 00000 - 11101
+```
+
+**Implementation:**
+
+```c
+static unsigned char* encode_fixed_huffman_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len) {
+    
+    // Set up fixed code tables
+    unsigned long lit_codes[286];
+    unsigned char lit_lens[286];
+    
+    for (int i = 0; i <= 143; i++) {
+        lit_codes[i] = 0b00110000 + i;
+        lit_lens[i] = 8;
+    }
+    for (int i = 144; i <= 255; i++) {
+        lit_codes[i] = 0b110010000 + (i - 144);
+        lit_lens[i] = 9;
+    }
+    for (int i = 256; i <= 279; i++) {
+        lit_codes[i] = 0b0000000 + (i - 256);
+        lit_lens[i] = 7;
+    }
+    for (int i = 280; i <= 287; i++) {
+        lit_codes[i] = 0b11000000 + (i - 280);
+        lit_lens[i] = 8;
+    }
+    
+    // Distance codes (all 5 bits)
+    unsigned long dist_codes[30];
+    unsigned char dist_lens[30];
+    for (int i = 0; i < 30; i++) {
+        dist_codes[i] = i;
+        dist_lens[i] = 5;
+    }
+    
+    // Allocate output buffer
+    size_t max_bits = num_tokens * 16;  // Conservative estimate
+    size_t buf_size = (max_bits + 7) / 8;
+    unsigned char* output = calloc(buf_size, 1);
+    unsigned long bit_pos = 0;
+    
+    // Encode each token
+    for (size_t i = 0; i < num_tokens; i++) {
+        if (tokens[i].is_literal) {
+            // Write literal code
+            write_huffman_code(output, &bit_pos, 
+                lit_codes[tokens[i].literal], 
+                lit_lens[tokens[i].literal]);
+        } else {
+            // Convert length to code
+            unsigned int extra_bits;
+            int len_code = length_to_code(tokens[i].length, &extra_bits);
+            write_huffman_code(output, &bit_pos, 
+                lit_codes[len_code], lit_lens[len_code]);
+            // Write extra bits for length
+            write_bits_lsb(output, &bit_pos, extra_bits, num_extra_bits);
+            
+            // Convert distance to code
+            int dist_code = distance_to_code(tokens[i].distance, &extra_bits);
+            write_huffman_code(output, &bit_pos, 
+                dist_codes[dist_code], dist_lens[dist_code]);
+            // Write extra bits for distance  
+            write_bits_lsb(output, &bit_pos, extra_bits, num_extra_bits);
+        }
+    }
+    
+    // Write end-of-block (256)
+    write_huffman_code(output, &bit_pos, lit_codes[256], lit_lens[256]);
+    
+    *bits_written = bit_pos;
+    *out_len = (bit_pos + 7) / 8;
+    return output;
+}
+```
+
+### Dynamic Huffman Encoding
+
+```c
+static unsigned char* encode_dynamic_huffman_tokens(
+    const lz_token_t* tokens, 
+    size_t num_tokens, 
+    unsigned long* bits_written, 
+    size_t* out_len)
+```
+
+**Algorithm:**
+
+<Steps>
+  <Step title="Count frequencies">
+    Count frequencies of all literal/length symbols (0-285) and distance symbols (0-29)
+  </Step>
+  
+  <Step title="Build Huffman trees">
+    Build optimal trees for literals/lengths and distances
+  </Step>
+  
+  <Step title="Extract code lengths">
+    Get the bit length for each symbol's code
+  </Step>
+  
+  <Step title="Build code length tree">
+    Compress the code lengths using run-length encoding and build a third tree
+  </Step>
+  
+  <Step title="Write header">
+    Write HLIT, HDIST, HCLEN values
+  </Step>
+  
+  <Step title="Write code length tree">
+    Transmit the code lengths for the code length alphabet
+  </Step>
+  
+  <Step title="Write compressed code lengths">
+    Encode literal/length and distance code lengths using the code length tree
+  </Step>
+  
+  <Step title="Write data">
+    Encode all tokens using the optimal Huffman codes
+  </Step>
+</Steps>
+
+This is the most complex function in the assignment. See the flowcharts in the README (lines 551-726) for visual guidance.
+
+## Decoding Implementation
+
+### Main Decoding Function
+
+```c
+unsigned char* huffman_decode(
+    const unsigned char* data, 
+    size_t enc_len, 
+    unsigned int btype_val, 
+    unsigned long *bits_read, 
+    size_t* out_len, 
+    const unsigned char* history, 
+    size_t history_len)
+```
+
+**Parameters:**
+- `data` - Compressed data to decode
+- `enc_len` - Length of compressed data
+- `btype_val` - Block type (0=uncompressed, 1=static, 2=dynamic)
+- `bits_read` - Output: number of bits consumed
+- `out_len` - Output: length of decompressed data
+- `history` - Previously decompressed data (for cross-block references)
+- `history_len` - Length of history buffer
+
+**Returns:**
+- Malloc'd buffer containing decompressed data
+- `NULL` on error
+
+<Warning>
+This function must also perform LZ77 decompression as it decodes Huffman symbols.
+</Warning>
+
+**Algorithm:**
+
+<Steps>
+  <Step title="Validate inputs">
+    Check for NULL pointers, invalid btype_val
+  </Step>
+  
+  <Step title="Handle uncompressed blocks">
+    If btype_val == 0, copy data directly (see GZIP format)
+  </Step>
+  
+  <Step title="Set up Huffman trees">
+    - If btype_val == 1: use fixed codes
+    - If btype_val == 2: read and build dynamic trees
+    - If btype_val == 3: return error (reserved)
+  </Step>
+  
+  <Step title="Decode symbols">
+    Read Huffman codes and decode symbols until end-of-block (256)
+  </Step>
+  
+  <Step title="Process symbols">
+    - Literals (0-255): append to output
+    - End-of-block (256): stop
+    - Lengths (257-285): read distance and perform LZ77 copy
+  </Step>
+  
+  <Step title="Return result">
+    Set out_len and return decompressed buffer
+  </Step>
+</Steps>
+
+**Pseudocode:**
+
+```c
+unsigned char* huffman_decode(
+    const unsigned char* data, 
+    size_t enc_len, 
+    unsigned int btype_val, 
+    unsigned long *bits_read, 
+    size_t* out_len, 
+    const unsigned char* history, 
+    size_t history_len) {
+    
+    // Validate
+    if (!data || !bits_read || !out_len) return NULL;
+    if (btype_val == 3) return NULL;  // Reserved block type
+    
+    unsigned long bit_pos = 0;
+    
+    // Handle uncompressed blocks
+    if (btype_val == BT_NO_COMPRESSION) {
+        // Skip to byte boundary
+        bit_pos = (bit_pos + 7) & ~7;
+        
+        // Read LEN and NLEN
+        unsigned short len = read_16_lsb(data, &bit_pos);
+        unsigned short nlen = read_16_lsb(data, &bit_pos);
+        
+        // Verify one's complement
+        if ((len ^ nlen) != 0xFFFF) return NULL;
+        
+        // Copy data
+        unsigned char* output = malloc(len);
+        memcpy(output, data + bit_pos/8, len);
+        bit_pos += len * 8;
+        
+        *bits_read = bit_pos;
+        *out_len = len;
+        return output;
+    }
+    
+    // Set up decoder
+    huff_decoder_t lit_decoder, dist_decoder;
+    
+    if (btype_val == BT_STATIC) {
+        // Use fixed codes
+        setup_fixed_decoders(&lit_decoder, &dist_decoder);
+    } else {
+        // Read dynamic trees
+        if (!read_dynamic_trees(data, &bit_pos, &lit_decoder, &dist_decoder)) {
+            return NULL;
+        }
+    }
+    
+    // Decode data
+    size_t output_capacity = 65536;  // Start with reasonable size
+    unsigned char* output = malloc(output_capacity);
+    size_t output_pos = 0;
+    
+    while (1) {
+        // Decode next symbol
+        int symbol = decode_symbol(&lit_decoder, data, &bit_pos);
+        
+        if (symbol < 0) {
+            // Decode error
+            free(output);
+            return NULL;
+        } else if (symbol < 256) {
+            // Literal byte
+            if (output_pos >= output_capacity) {
+                output_capacity *= 2;
+                output = realloc(output, output_capacity);
+            }
+            output[output_pos++] = (unsigned char)symbol;
+        } else if (symbol == 256) {
+            // End of block
+            break;
+        } else if (symbol <= 285) {
+            // Length/distance pair
+            int length = decode_length_value(symbol, data, &bit_pos);
+            int dist_code = decode_symbol(&dist_decoder, data, &bit_pos);
+            
+            if (dist_code == 30 || dist_code == 31) {
+                // Invalid distance codes
+                free(output);
+                return NULL;
+            }
+            
+            int distance = decode_distance_value(dist_code, data, &bit_pos);
+            
+            // Perform LZ77 copy
+            for (int i = 0; i < length; i++) {
+                if (output_pos >= output_capacity) {
+                    output_capacity *= 2;
+                    output = realloc(output, output_capacity);
+                }
+                
+                // Handle cross-block references
+                if (distance <= output_pos) {
+                    output[output_pos] = output[output_pos - distance];
+                } else if (history) {
+                    size_t hist_pos = history_len - (distance - output_pos);
+                    output[output_pos] = history[hist_pos];
+                } else {
+                    free(output);
+                    return NULL;  // Reference beyond available data
+                }
+                output_pos++;
+            }
+        }
+    }
+    
+    *bits_read = bit_pos;
+    *out_len = output_pos;
+    return output;
+}
+```
+
+### Reading Dynamic Trees
+
+From README lines 729-869, here's the process:
+
+<Steps>
+  <Step title="Read HLIT (5 bits)">
+    Number of literal/length codes - 257 (actual count = HLIT + 257)
+  </Step>
+  
+  <Step title="Read HDIST (5 bits)">
+    Number of distance codes - 1 (actual count = HDIST + 1)
+  </Step>
+  
+  <Step title="Read HCLEN (4 bits)">
+    Number of code length codes - 4 (actual count = HCLEN + 4)
+  </Step>
+  
+  <Step title="Read code length alphabet">
+    Read (HCLEN + 4) × 3 bits in the order: 16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15
+  </Step>
+  
+  <Step title="Build code length tree">
+    Construct Huffman tree for code lengths (0-18)
+  </Step>
+  
+  <Step title="Decode literal/length code lengths">
+    Read (HLIT + 257) code length values using the code length tree
+  </Step>
+  
+  <Step title="Decode distance code lengths">
+    Read (HDIST + 1) code length values using the code length tree
+  </Step>
+  
+  <Step title="Build main trees">
+    Construct literal/length and distance Huffman trees from the code lengths
+  </Step>
+</Steps>
+
+### Handling Code Length Symbols
+
+When decoding code lengths, symbols have special meanings:
+
+- **0-15:** Literal code length value
+- **16:** Repeat previous code length 3-6 times (read 2 extra bits)
+- **17:** Repeat code length 0 for 3-10 times (read 3 extra bits)
+- **18:** Repeat code length 0 for 11-138 times (read 7 extra bits)
+
+```c
+for (int i = 0; i < num_codes; ) {
+    int symbol = decode_symbol(&codelength_decoder, data, &bit_pos);
+    
+    if (symbol <= 15) {
+        code_lengths[i++] = symbol;
+    } else if (symbol == 16) {
+        int repeat = 3 + read_bits(data, &bit_pos, 2);
+        int prev = code_lengths[i - 1];
+        for (int j = 0; j < repeat; j++) {
+            code_lengths[i++] = prev;
+        }
+    } else if (symbol == 17) {
+        int repeat = 3 + read_bits(data, &bit_pos, 3);
+        for (int j = 0; j < repeat; j++) {
+            code_lengths[i++] = 0;
+        }
+    } else if (symbol == 18) {
+        int repeat = 11 + read_bits(data, &bit_pos, 7);
+        for (int j = 0; j < repeat; j++) {
+            code_lengths[i++] = 0;
+        }
+    }
+}
+```
+
+## Helper Functions
+
+Implement these helper functions for cleaner code:
+
+### Tree Building
+
+```c
+static huff_node_t* build_huffman_tree_from_freq(
+    unsigned int *frequencies, 
+    int num_symbols, 
+    unsigned long *codes, 
+    unsigned char *lens)
+```
+
+Use a priority queue to build the tree bottom-up (see `queue.h`).
+
+### Code Generation
+
+```c
+static void build_codes(
+    const huff_node_t* node, 
+    unsigned long code, 
+    int len, 
+    unsigned long* codes, 
+    unsigned char* lens)
+```
+
+Recursively traverse tree to generate codes.
+
+```c
+static void canonical_codes(
+    unsigned char* lens, 
+    unsigned long* codes, 
+    unsigned int range)
+```
+
+Generate canonical codes from lengths only.
+
+### Decoder Building
+
+```c
+static void build_decoder(
+    huff_decoder_t* dec, 
+    unsigned char* lens, 
+    int num_symbols)
+```
+
+Create lookup tables for fast decoding.
+
+### Symbol Decoding
+
+```c
+static int decode_symbol(
+    huff_decoder_t* dec, 
+    const unsigned char* data, 
+    unsigned long* bits_read)
+```
+
+Decode one symbol from the bit stream.
+
+### Length/Distance Conversion
+
+```c
+static int length_to_code(unsigned int length, unsigned int *extra_val)
+static int distance_to_code(unsigned int distance, unsigned int *extra_val)
+```
+
+Convert values to codes and extra bits (use the tables from the README).
+
+### Memory Management
+
+```c
+static void free_tree(huff_node_t* n)
+```
+
+Recursively free tree nodes.
+
+## Error Handling
+
+Return `NULL` if:
+
+- Any required pointer is NULL
+- `btype_val` is 3 (reserved)
+- `bits_read` is NULL (required output)
+- Invalid Huffman codes encountered
+- Distance codes 30 or 31
+- Memory allocation fails
+- Data ends prematurely
+- Invalid code length sequences
+
+## Testing
+
+### Test Static Huffman
+
+1. Create simple LZ77 tokens
+2. Encode with static Huffman
+3. Decode and verify
+
+### Test Dynamic Huffman
+
+1. Create tokens with non-uniform frequency
+2. Encode with dynamic Huffman
+3. Verify dynamic is smaller than static
+4. Decode and verify
+
+### Test Code Length Encoding
+
+1. Create code lengths with repetitions
+2. Verify symbols 16, 17, 18 are used
+3. Decode and verify lengths match
+
+### Test LZ77 Integration
+
+1. Create tokens with length/distance pairs
+2. Encode and decode
+3. Verify LZ77 decompression works
+4. Test wrap-around case (distance < length)
+
+## Memory Management
+
+<Warning>
+All encode and decode functions return malloc'd buffers. The caller must free them.
+</Warning>
+
+```c
+size_t out_len;
+unsigned char* result = huffman_decode(data, len, btype, &bits, &out_len, NULL, 0);
+if (!result) {
+    // Handle error
+}
+
+// Use result...
+
+free(result);  // Don't forget!
+```
+
+Also free intermediate structures:
+- Huffman trees (use `free_tree()`)
+- Decoder tables
+- Temporary buffers
+
+## Summary
+
+Key implementation points:
+
+- `huffman_encode_tokens()` tries both static and dynamic, chooses best
+- Static Huffman uses predefined codes from RFC 1951
+- Dynamic Huffman builds optimal trees and encodes them
+- `huffman_decode()` handles all block types and performs LZ77 decompression
+- Code lengths are compressed using run-length encoding (symbols 16, 17, 18)
+- Symbol 256 marks end-of-block
+- Distance codes 30 and 31 are invalid
+- Return NULL on all errors
+- Free all allocated memory
+
+## Next Steps
+
+- [GZIP Format](/zlib/gzip-format) - File format and member headers
+- [DEFLATE](/zlib/deflate) - Complete compression pipeline
+- [INFLATE](/zlib/inflate) - Complete decompression pipeline

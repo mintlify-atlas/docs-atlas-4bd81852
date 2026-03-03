@@ -1,0 +1,170 @@
+---
+title: PNG homework overview
+description: Introduction to the PNG image manipulation assignment for CSE320
+---
+
+## Assignment overview
+
+In this assignment, you will write a command-line program in C to interact with PNG (Portable Network Graphics) image files. The goal is to familiarize yourself with systems-level C programming through a realistic and challenging project.
+
+### Learning objectives
+
+This homework focuses on developing skills in:
+
+<CardGroup cols={2}>
+  <Card title="File I/O" icon="file">
+    Reading and writing binary file formats with precise byte-level control
+  </Card>
+  <Card title="Pointers & Memory" icon="memory">
+    Dynamic memory allocation, pointer manipulation, and memory management
+  </Card>
+  <Card title="Bitwise Operations" icon="binary">
+    LSB manipulation for steganography and bit-level data processing
+  </Card>
+  <Card title="Data Structures" icon="database">
+    Working with complex binary structures and endianness conversions
+  </Card>
+</CardGroup>
+
+## What you'll build
+
+You will implement a PNG manipulation tool that can:
+
+<Steps>
+  <Step title="Parse PNG files">
+    Read and validate PNG file structure, including signature verification and chunk parsing
+  </Step>
+  <Step title="Extract metadata">
+    Parse IHDR (header) and PLTE (palette) chunks to extract image metadata
+  </Step>
+  <Step title="Validate integrity">
+    Implement CRC-32 checksum validation for all PNG chunks
+  </Step>
+  <Step title="Hide messages">
+    Encode secret messages into images using LSB steganography
+  </Step>
+  <Step title="Overlay images">
+    Composite smaller images onto larger ones with palette merging
+  </Step>
+</Steps>
+
+## PNG specification
+
+The official PNG specification is available at:
+- [PNG Specification 1.2](https://www.libpng.org/pub/png/spec/1.2/PNG-Contents.html)
+- [PNG Chunks Reference](https://www.libpng.org/pub/png/spec/1.2/PNG-Chunks.html#C.IHDR)
+
+You should familiarize yourself with the specification, particularly:
+- The 8-byte PNG signature
+- Chunk structure (length, type, data, CRC)
+- IHDR chunk format (image header)
+- PLTE chunk format (color palette)
+- IDAT chunks (image data)
+- Big-endian integer encoding
+
+## Project structure
+
+The assignment template includes:
+
+```
+PNG_HW/
+├── include/          # Header files
+│   ├── global.h      # Output macros and constants
+│   ├── png_chunks.h  # Chunk parsing functions
+│   ├── png_crc.h     # CRC-32 implementation
+│   ├── png_reader.h  # PNG file reading
+│   ├── png_steg.h    # Steganography functions
+│   ├── png_overlay.h # Image overlay functions
+│   └── util.h        # Utility functions
+├── src/              # Implementation files
+│   ├── main.c        # Main program (you fill this in)
+│   ├── png_chunks.c
+│   ├── png_crc.c
+│   ├── png_reader.c
+│   ├── png_steg.c
+│   ├── png_overlay.c
+│   └── util.c
+└── tests/            # Criterion test files
+    ├── test_chunks.c
+    ├── test_crc.c
+    ├── test_reader.c
+    ├── test_steg.c
+    └── test_overlay.c
+```
+
+<Warning>
+  Some files contain "DO NOT MODIFY" notices at the beginning. These files will be replaced with original versions during grading, so do not modify them.
+</Warning>
+
+## Allowed libraries
+
+For this assignment:
+
+**Allowed:**
+- `glibc` (GNU standard C library) including `malloc`, `calloc`, `fgetc`, etc.
+- `zlib` library for data compression/decompression
+- Sample CRC code from the PNG specification appendix
+
+**Disallowed:**
+- Binary libraries other than `glibc` and `zlib`
+- Existing PNG manipulation libraries
+
+<Note>
+  Submitting code that uses disallowed libraries will result in a zero grade and potential academic dishonesty charges.
+</Note>
+
+## Academic integrity
+
+You must write your own code. You are not permitted to:
+- Submit source code you did not write yourself
+- Use code from the internet or other students
+- Use AI-generated code without understanding and documenting it
+
+Exceptions:
+- Base code provided in the template repository
+- Code explicitly permitted in writing by the instructor
+
+## Timeline and expectations
+
+<Warning>
+  **Due date: Sunday February 15th @ 11:59 PM**
+</Warning>
+
+This is a challenging project. You should:
+
+- **Start immediately** - Do not wait until the last week
+- **Allocate regular time** - Work on it consistently over several weeks  
+- **Experiment with data** - Use `hd` (hex dump) to examine PNG files
+- **Write your own tests** - The provided tests are minimal
+- **Test incrementally** - Don't wait to test everything at once
+
+<Tip>
+  It is extremely unlikely anyone will read the handout and immediately write working code. Plan to spend significant time experimenting and debugging.
+</Tip>
+
+## Getting help
+
+Resources available to you:
+
+- **README.md** - Detailed assignment specification
+- **Piazza** - Check for updates and clarifications
+- **Office hours** - Get help from TAs and professor
+- **PNG specification** - Official documentation
+- **Beej's Guide to C** - Excellent C programming reference
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Requirements" icon="clipboard-check" href="/png/requirements">
+    Review detailed assignment requirements
+  </Card>
+  <Card title="CLI arguments" icon="terminal" href="/png/cli-arguments">
+    Start with Part 1: command-line processing
+  </Card>
+  <Card title="PNG format" icon="image" href="/png/png-format">
+    Learn about PNG file structure
+  </Card>
+  <Card title="API reference" icon="code" href="/png/api/reader">
+    Explore the PNG API functions
+  </Card>
+</CardGroup>

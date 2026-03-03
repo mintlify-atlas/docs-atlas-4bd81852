@@ -1,0 +1,381 @@
+---
+title: Assignment requirements
+description: Detailed requirements for the PNG homework assignment
+---
+
+## Code organization
+
+Your implementation must follow these strict organizational rules:
+
+### main.c restrictions
+
+<Warning>
+  The `main.c` file **MUST ONLY** contain:
+  - `#include` statements
+  - Local `#define` macros
+  - The `main()` function
+</Warning>
+
+All other functions must be in separate `.c` files in the `src/` directory. This restriction exists because of how the Criterion testing framework is used for grading.
+
+### File organization
+
+- You may create as many `.c` files as you need in `src/`
+- You may create as many header files as you need in `include/`
+- Do **NOT** modify files marked "DO NOT MODIFY" at the beginning
+- These files will be replaced with original versions during grading
+
+## Part 1: Command-line argument processing
+
+### Required functionality
+
+Implement a two-pass argument processing system:
+
+**First pass:**
+1. Check for `-h` flag (if present, print usage and exit successfully)
+2. Locate and validate the required `-f <filename>` flag
+3. Extract the PNG filename
+
+**Second pass:**
+1. Process all operation flags in the order they appear
+2. Execute each operation and produce the specified output
+
+### Supported operations
+
+<Accordion title="-h (Help)">
+  Print the usage message to stdout and exit with `EXIT_SUCCESS`.
+  
+  Use the `PRINT_USAGE()` macro from `global.h`.
+</Accordion>
+
+<Accordion title="-f <filename> (Required)">
+  Specify the input PNG file. Required for all operations except `-h`.
+  
+  If missing or has no filename argument, print error to stderr and exit with `EXIT_FAILURE`.
+</Accordion>
+
+<Accordion title="-s (Chunk summary)">
+  Print a summary of all chunks in the PNG file:
+  
+  ```
+  Chunk Summary for image.png:
+    Chunk 0: Type=IHDR, Length=13, CRC=valid
+    Chunk 1: Type=PLTE, Length=768, CRC=valid
+    Chunk 2: Type=IDAT, Length=12345, CRC=valid
+    ...
+    Chunk N: Type=IEND, Length=0, CRC=valid
+  ```
+</Accordion>
+
+<Accordion title="-i (IHDR fields)">
+  Print the IHDR header fields:
+  
+  ```
+  IHDR Fields for image.png:
+    Width: 320
+    Height: 320  
+    Bit Depth: 8
+    Color Type: 3 (Palette)
+    Compression: 0
+    Filter: 0
+    Interlace: 0 (None)
+  ```
+  
+  Color type descriptions: (Grayscale), (RGB), (Palette), (Grayscale with Alpha), (RGB with Alpha)
+  
+  Interlace descriptions: (None) for 0, (Adam7) for 1
+</Accordion>
+
+<Accordion title="-p (Palette)">
+  Print palette summary (only valid for color type 3 images):
+  
+  ```
+  Palette Summary for image.png:
+    Number of colors: 168
+    Color 0: RGB(1, 0, 5)
+    Color 1: RGB(4, 0, 6)
+    ...
+  ```
+  
+  If no PLTE chunk exists or parsing fails, print error to stderr.
+</Accordion>
+
+<Accordion title="-e <message> -o <outfile> (Encode)">
+  Encode a secret message into the PNG image using LSB steganography.
+  
+  On success, print:
+  ```
+  Message encoded successfully to output.png
+  ```
+  
+  On failure (message too long, file errors), print error to stderr and exit with `EXIT_FAILURE`.
+</Accordion>
+
+<Accordion title="-d (Decode)">
+  Extract and print the hidden message:
+  
+  ```
+  Hidden message: Hello, World!
+  ```
+  
+  On failure, print error to stderr and exit with `EXIT_FAILURE`.
+</Accordion>
+
+<Accordion title="-m <file2> -o <outfile> [-w <x>] [-g <y>] (Overlay)">
+  Overlay a smaller PNG onto the input PNG at coordinates (x, y).
+  
+  - `-w`: X offset (column), defaults to 0 if not specified
+  - `-g`: Y offset (row), defaults to 0 if not specified  
+  - `-w` and `-g` are optional and may appear in any order after `-o`
+  
+  On success, print:
+  ```
+  Overlay completed successfully to output.png
+  ```
+  
+  On failure, print error to stderr and exit with `EXIT_FAILURE`.
+</Accordion>
+
+### Output requirements
+
+<Warning>
+  **Critical:** Your program must produce EXACTLY the specified output. Even minor deviations will significantly impact your grade.
+</Warning>
+
+- Use the provided macros in `global.h` for all output
+- No extraneous output to stdout in normal operation
+- Use the `debug()` macro for debugging messages (only shown in debug builds)
+- Error messages go to stderr, normal output to stdout
+
+### Example invocations
+
+```bash
+# Print help
+bin/png -h
+
+# Print chunk summary
+bin/png -f image.png -s
+
+# Print IHDR and palette
+bin/png -f image.png -i -p
+
+# Encode message
+bin/png -f image.png -e "Secret message" -o encoded.png
+
+# Decode message  
+bin/png -f encoded.png -d
+
+# Overlay images
+bin/png -f large.png -m small.png -o result.png -w 50 -g 100
+
+# Multiple operations
+bin/png -f image.png -s -i -p
+```
+
+## Part 2: PNG parsing
+
+### Required functions
+
+You must implement these functions in the appropriate source files:
+
+**png_reader.c:**
+- `png_open()` - Open and validate PNG signature
+- `png_read_chunk()` - Read next chunk with CRC validation
+- `png_free_chunk()` - Free chunk memory
+- `png_extract_ihdr()` - Extract and parse IHDR chunk
+- `png_extract_plte()` - Extract and parse PLTE chunk
+- `png_summary()` - Read all chunks into summary array
+
+**png_chunks.c:**
+- `png_parse_ihdr()` - Parse IHDR chunk data
+- `png_parse_plte()` - Parse PLTE chunk data
+
+**png_crc.c:**
+- `png_crc()` - Compute CRC-32 checksum
+
+### Data structures
+
+Use the provided structures from the header files:
+
+```c
+typedef struct {
+    uint32_t width;      // Big-endian
+    uint32_t height;     // Big-endian  
+    uint8_t  bit_depth;
+    uint8_t  color_type;
+    uint8_t  compression;
+    uint8_t  filter;
+    uint8_t  interlace;
+} png_ihdr_t;
+
+typedef struct {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} png_color_t;
+
+typedef struct {
+    uint32_t length;     // Big-endian
+    char     type[5];    // Null-terminated
+    uint8_t *data;       // Dynamically allocated
+    uint32_t crc;        // Big-endian
+} png_chunk_t;
+```
+
+### Memory management
+
+- Use `malloc()` and `calloc()` for dynamic allocation
+- Always check for allocation failures
+- Free all allocated memory when done
+- Use `png_free_chunk()` to free chunk data
+- Avoid memory leaks (will be tested with Valgrind)
+
+### Endianness
+
+<Note>
+  PNG uses big-endian encoding for all multi-byte integers. Your program runs on little-endian x64, so you must convert byte order.
+</Note>
+
+Use the utility functions provided in `util.c` or implement your own conversions.
+
+## Part 3: Steganography
+
+### LSB encoding
+
+Implement `png_embed_lsb()` to hide messages in images:
+
+**For non-palette images (color types 0, 2, 4, 6):**
+- Modify the LSB of the first channel of each pixel
+- One bit per pixel (0 or 1)
+- Message capacity: width × height bits
+
+**For palette images (color type 3):**
+- Duplicate palette colors to create identical-color pairs
+- Swap between pair indices to encode 0 or 1 bits
+- Visually undetectable since colors are identical
+
+### LSB decoding
+
+Implement `png_extract_lsb()` to extract hidden messages:
+
+- Read bits in the same order they were written
+- Reconstruct bytes from 8 bits each
+- Stop when null terminator is found
+- Support both encoding methods (direct LSB and palette pairs)
+
+### Requirements
+
+- Only support 8-bit images (`bit_depth == 8`)
+- Check message fits in image capacity
+- Include null terminator in capacity calculation
+- Never modify filter bytes at the start of scanlines
+- Use PNG-compatible zlib compression for output
+
+## Part 4: Image overlay
+
+### Implementation
+
+Implement `png_overlay_paste()` to composite images:
+
+<Steps>
+  <Step title="Validate compatibility">
+    Both images must have same bit depth (8) and color type
+  </Step>
+  <Step title="Merge palettes">
+    For color type 3, merge palette colors and remap indices
+  </Step>
+  <Step title="Decompress image data">
+    Use zlib to decompress all IDAT chunks
+  </Step>
+  <Step title="Unfilter scanlines">
+    Apply PNG unfiltering (support all 5 filter types)
+  </Step>
+  <Step title="Paste pixels">
+    Copy pixels from small image to large image at specified offset
+  </Step>
+  <Step title="Re-filter and compress">
+    Apply filtering (can use filter type 0: None) and compress
+  </Step>
+  <Step title="Write output">
+    Write PNG with proper chunk structure
+  </Step>
+</Steps>
+
+### PNG filters
+
+You must support all 5 PNG filter types during **unfiltering**:
+
+0. **None** - No filtering
+1. **Sub** - Difference from left neighbor
+2. **Up** - Difference from above neighbor
+3. **Average** - Average of left and above
+4. **Paeth** - Paeth predictor algorithm
+
+For **filtering** the output, you can use filter type 0 (None) for simplicity.
+
+### Palette merging
+
+- Add all colors from large image palette
+- Add new colors from small image palette (if not already present)
+- Maximum 256 total colors
+- Create index mapping for small image
+- Remap all small image pixel indices before pasting
+
+## Testing requirements
+
+### Provided tests
+
+<Warning>
+  The tests in the template are minimal and only check basic functionality. The real grading tests are more comprehensive and run after the deadline.
+</Warning>
+
+### Write your own tests
+
+You **STRONGLY** encouraged to:
+- Write additional Criterion tests
+- Test edge cases and error conditions
+- Test with various PNG files from `tests/data/`
+- Use `hd` to examine binary file output
+- Verify output format exactly matches specifications
+
+### Testing with Criterion
+
+Run tests with:
+```bash
+make
+bin/png_tests                    # Run all tests
+bin/png_tests --verbose=0        # Verbose output
+bin/png_tests --filter=test_name # Run specific test
+```
+
+See the [Testing](/testing) page for more details.
+
+## Deliverables
+
+You must submit:
+
+1. All source code (`.c` files)
+2. Any additional header files you created
+3. Your code must compile with `make` and `make debug`
+4. All tests must run without crashes
+
+<Note>
+  Make sure to test compilation with both `make clean all` and `make clean debug` before submission.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="CLI arguments" icon="terminal" href="/png/cli-arguments">
+    Start implementing Part 1
+  </Card>
+  <Card title="PNG format" icon="image" href="/png/png-format">
+    Learn PNG file structure
+  </Card>
+  <Card title="API reference" icon="code" href="/png/api/reader">
+    Review function signatures
+  </Card>
+  <Card title="Grading" icon="clipboard-check" href="/png/grading">
+    Understand how you'll be graded
+  </Card>
+</CardGroup>

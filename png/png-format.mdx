@@ -1,0 +1,340 @@
+---
+title: PNG file format
+description: Understanding the structure of PNG (Portable Network Graphics) files
+---
+
+## Overview
+
+PNG (Portable Network Graphics) is a lossless raster image format that uses compression to reduce file size while preserving image quality. Understanding the binary structure is essential for this assignment.
+
+## PNG file structure
+
+Every PNG file consists of:
+
+<Steps>
+  <Step title="8-byte signature">
+    Fixed magic bytes that identify the file as PNG
+  </Step>
+  <Step title="Series of chunks">
+    Variable-length data blocks, each with a specific purpose
+  </Step>
+  <Step title="IEND chunk">
+    Special chunk marking the end of the file
+  </Step>
+</Steps>
+
+## PNG signature
+
+The first 8 bytes of every valid PNG file are:
+
+```
+0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A
+```
+
+In a hex dump:
+```bash
+$ hd image.png | head -1
+00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
+```
+
+### Purpose of each byte
+
+<ResponseField name="0x89" type="byte">
+  High bit set - detects systems that don't handle 8-bit data
+</ResponseField>
+
+<ResponseField name="0x50 0x4E 0x47" type="bytes">
+  ASCII "PNG" - identifies the format
+</ResponseField>
+
+<ResponseField name="0x0D 0x0A" type="bytes">
+  DOS-style line ending - detects DOS/Unix line ending conversion
+</ResponseField>
+
+<ResponseField name="0x1A" type="byte">
+  DOS end-of-file character - stops file display under DOS
+</ResponseField>
+
+<ResponseField name="0x0A" type="byte">
+  Unix-style line ending - detects Unix/DOS conversion
+</ResponseField>
+
+### Validating the signature
+
+```c
+uint8_t signature[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+uint8_t buffer[8];
+
+if (fread(buffer, 1, 8, fp) != 8) {
+    return NULL; // Read error
+}
+
+if (memcmp(buffer, signature, 8) != 0) {
+    return NULL; // Not a valid PNG
+}
+
+// File pointer now positioned at first chunk
+```
+
+## Chunk structure
+
+After the signature, a PNG file consists entirely of chunks. Each chunk has this structure:
+
+<div style={{fontFamily: 'monospace', backgroundColor: '#f5f5f5', padding: '1rem', borderRadius: '0.5rem'}}>
+  <table>
+    <tr><td style={{width: '25%'}}>Length (4 bytes)</td><td>Number of bytes in the data field</td></tr>
+    <tr><td>Type (4 bytes)</td><td>ASCII chunk type identifier</td></tr>
+    <tr><td>Data (variable)</td><td>Chunk payload (length specified above)</td></tr>
+    <tr><td>CRC (4 bytes)</td><td>Cyclic redundancy check</td></tr>
+  </table>
+</div>
+
+### Length field
+
+- 4 bytes, big-endian unsigned 32-bit integer
+- Specifies the number of bytes in the **data** field only
+- Does NOT include the length, type, or CRC fields
+- Can be zero (e.g., IEND chunk has no data)
+
+```c
+uint8_t len_bytes[4];
+fread(len_bytes, 1, 4, fp);
+
+// Convert from big-endian to native
+uint32_t length = (len_bytes[0] << 24) | (len_bytes[1] << 16) |
+                  (len_bytes[2] << 8)  | len_bytes[3];
+```
+
+### Type field
+
+- 4 ASCII characters (printable bytes)
+- Case-sensitive
+- Identifies the chunk's purpose
+
+Common chunk types:
+
+<ResponseField name="IHDR" type="critical">
+  **Image Header** - Must be first chunk, contains image dimensions and format
+</ResponseField>
+
+<ResponseField name="PLTE" type="critical">
+  **Palette** - Color palette for indexed-color images (color type 3)
+</ResponseField>
+
+<ResponseField name="IDAT" type="critical">
+  **Image Data** - Compressed pixel data (can appear multiple times)
+</ResponseField>
+
+<ResponseField name="IEND" type="critical">
+  **Image End** - Must be last chunk, marks end of file
+</ResponseField>
+
+<ResponseField name="tRNS" type="ancillary">
+  **Transparency** - Transparency information
+</ResponseField>
+
+<ResponseField name="bKGD" type="ancillary">
+  **Background** - Default background color
+</ResponseField>
+
+### Data field
+
+- Variable length (specified by length field)
+- Content depends on chunk type
+- Can be empty (length = 0)
+
+### CRC field
+
+- 4 bytes, big-endian unsigned 32-bit integer
+- Computed over the **type and data** fields (not length or CRC itself)
+- Uses CRC-32 algorithm with polynomial 0xEDB88320
+- Used to detect corruption
+
+## Big-endian encoding
+
+<Warning>
+  PNG uses big-endian (most-significant byte first) for all multi-byte integers. Intel x64 processors are little-endian.
+</Warning>
+
+### Example: Converting 32-bit integers
+
+```c
+// Big-endian bytes: 0x00 0x00 0x01 0x40
+// Represents: 320 in decimal
+
+uint8_t bytes[4] = {0x00, 0x00, 0x01, 0x40};
+
+// Manual conversion
+uint32_t value = (bytes[0] << 24) | (bytes[1] << 16) |
+                 (bytes[2] << 8)  | bytes[3];
+// value = 320
+
+// Or use utility function
+uint32_t value = read_u32_be(bytes);
+```
+
+### Why endianness matters
+
+If you forget to convert:
+
+```c
+// WRONG: Reading as little-endian on x64
+uint32_t *ptr = (uint32_t*)bytes;
+uint32_t value = *ptr;
+// value = 0x40010000 = 1073807360 (completely wrong!)
+
+// CORRECT: Convert from big-endian
+uint32_t value = (bytes[0] << 24) | (bytes[1] << 16) |
+                 (bytes[2] << 8)  | bytes[3];
+// value = 0x00000140 = 320 (correct)
+```
+
+## Critical chunks
+
+For this assignment, focus on these four chunk types:
+
+### IHDR (Image Header)
+
+Must be the first chunk. Contains 13 bytes of data:
+
+<ResponseField name="Width" type="uint32_t" required>
+  Image width in pixels (big-endian)
+</ResponseField>
+
+<ResponseField name="Height" type="uint32_t" required>
+  Image height in pixels (big-endian)
+</ResponseField>
+
+<ResponseField name="Bit depth" type="uint8_t" required>
+  Bits per sample: 1, 2, 4, 8, or 16
+</ResponseField>
+
+<ResponseField name="Color type" type="uint8_t" required>
+  - 0: Grayscale
+  - 2: RGB (Truecolor)
+  - 3: Indexed (Palette)
+  - 4: Grayscale + Alpha
+  - 6: RGB + Alpha
+</ResponseField>
+
+<ResponseField name="Compression" type="uint8_t" required>
+  Must be 0 (deflate/inflate)
+</ResponseField>
+
+<ResponseField name="Filter" type="uint8_t" required>
+  Must be 0 (adaptive filtering with five basic filter types)
+</ResponseField>
+
+<ResponseField name="Interlace" type="uint8_t" required>
+  0 = no interlace, 1 = Adam7 interlace
+</ResponseField>
+
+### PLTE (Palette)
+
+- Contains 1-256 RGB color entries
+- Each entry is 3 bytes: Red, Green, Blue (0-255 each)
+- Length must be divisible by 3
+- Required for color type 3, optional for types 2 and 6
+
+Example with 2 colors:
+```
+Length: 6 (2 colors × 3 bytes)
+Data: [R1, G1, B1, R2, G2, B2]
+```
+
+### IDAT (Image Data)
+
+- Contains compressed pixel data
+- Uses zlib DEFLATE compression
+- Multiple IDAT chunks can exist (concatenate before decompression)
+- After decompression, data is organized into scanlines
+- Each scanline starts with a filter type byte
+
+### IEND (Image End)
+
+- Must be the last chunk
+- Always has length 0 (no data)
+- Marks the end of the PNG file
+
+## Examining PNG files
+
+### Using hex dump (hd)
+
+```bash
+$ hd tests/data/Large_batman_3.png | less
+```
+
+Output:
+```
+00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
+00000010  00 00 01 40 00 00 01 40  08 03 00 00 00 fa 4e 55  |...@...@......NU|
+00000020  e6 00 00 01 f8 50 4c 54  45 47 70 4c 00 00 00 02  |.....PLTEGpL....|
+```
+
+Breaking down the first chunk:
+
+<Steps>
+  <Step title="Length">
+    Bytes 8-11: `00 00 00 0d` = 13 bytes
+  </Step>
+  <Step title="Type">
+    Bytes 12-15: `49 48 44 52` = "IHDR" in ASCII
+  </Step>
+  <Step title="Data">
+    Bytes 16-28: 13 bytes of IHDR data
+    - Width: `00 00 01 40` = 320
+    - Height: `00 00 01 40` = 320
+    - Bit depth: `08` = 8
+    - Color type: `03` = Palette
+    - Compression: `00`
+    - Filter: `00`
+    - Interlace: `00`
+  </Step>
+  <Step title="CRC">
+    Bytes 29-32: `fa 4e 55 e6` (checksum)
+  </Step>
+</Steps>
+
+### Chunk boundaries
+
+Notice how chunks follow each other:
+
+```
+Signature:  89 50 4e 47 0d 0a 1a 0a
+IHDR chunk: 00 00 00 0d 49 48 44 52 [13 bytes data] fa 4e 55 e6
+PLTE chunk: 00 00 01 f8 50 4c 54 45 [504 bytes data] [4 byte CRC]
+...
+```
+
+Each chunk starts immediately after the previous chunk's CRC.
+
+## PNG specification reference
+
+For complete details, see:
+
+- [PNG Specification 1.2](https://www.libpng.org/pub/png/spec/1.2/PNG-Contents.html)
+- [Chunk Structure](https://www.libpng.org/pub/png/spec/1.2/PNG-Structure.html)
+- [Chunk Specifications](https://www.libpng.org/pub/png/spec/1.2/PNG-Chunks.html)
+
+## Key takeaways
+
+<Note>
+  **Essential concepts:**
+  1. PNG files start with an 8-byte signature
+  2. All data after the signature is organized into chunks
+  3. Each chunk has length, type, data, and CRC fields
+  4. All multi-byte integers are big-endian
+  5. IHDR must be first, IEND must be last
+  6. CRC is computed over type + data fields
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Chunk reading" icon="cube" href="/png/chunk-reading">
+    Learn how to read PNG chunks
+  </Card>
+  <Card title="CRC validation" icon="shield-check" href="/png/crc-validation">
+    Implement CRC-32 checksums
+  </Card>
+</CardGroup>

@@ -1,0 +1,522 @@
+---
+title: "GZIP File Format"
+description: "Understanding the GZIP file format and member structure"
+---
+
+## Overview
+
+GNU ZIP (GZIP) files are a file format used for lossless data compression. A GZIP file consists of one or more **members**, each containing compressed data along with metadata about that data.
+
+## File Structure
+
+A GZIP file has the following high-level structure:
+
+```
++-------------------+
+| Member 1 Header   |
++-------------------+
+| Member 1 Data     |
+| (Compressed)      |
++-------------------+
+| Member 1 Footer   |
++-------------------+
+| Member 2 Header   | (optional)
++-------------------+
+| ...               |
+```
+
+Each member is self-contained and can be decompressed independently.
+
+## GZIP Magic Number
+
+All GZIP members start with the same 2-byte identifier:
+
+```
+0x1f 0x8b
+```
+
+From `our_zlib.h:65`:
+```c
+#define ID 0x1f8b
+```
+
+From README line 327:
+> The first 2 bytes of all members are the same. They are the following values: 0x1f 0x8b.
+
+<Warning>
+If these bytes are not present, the file is not a valid GZIP file. Use `PRINT_ERROR_BAD_HEADER()` and return an error.
+</Warning>
+
+## Member Header Structure
+
+The GZIP member header contains metadata about the compressed data.
+
+### Required Fields
+
+These fields are present in every member:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 1 | ID1 | Identification byte 1 (0x1f) |
+| 1 | 1 | ID2 | Identification byte 2 (0x8b) |
+| 2 | 1 | CM | Compression Method |
+| 3 | 1 | FLG | Flags |
+| 4 | 4 | MTIME | Modification time (Unix timestamp) |
+| 8 | 1 | XFL | Extra flags |
+| 9 | 1 | OS | Operating system |
+
+### Compression Method (CM)
+
+From README line 330:
+> **Compression Method** (1 byte): Either 0 (no compression) or 8 (standard deflate compression algorithm)
+
+- **0:** No compression (raw data)
+- **8:** DEFLATE compression (standard)
+
+Other values are reserved.
+
+### Flags (FLG)
+
+From `our_zlib.h:31-35`:
+
+```c
+#define F_TEXT      1   // Bit 0: Text file hint
+#define F_HCRC      2   // Bit 1: Header CRC present
+#define F_EXTRA     4   // Bit 2: Extra field present
+#define F_NAME      8   // Bit 3: Original file name present
+#define F_COMMENT   16  // Bit 4: Comment present
+```
+
+Each bit indicates whether an optional field is present:
+
+- **FTEXT (bit 0):** File is probably ASCII text (hint only)
+- **FHCRC (bit 1):** 16-bit CRC of header is present
+- **FEXTRA (bit 2):** Extra field is present
+- **FNAME (bit 3):** Original file name is present
+- **FCOMMENT (bit 4):** Comment is present
+
+Bits 5-7 are reserved and must be zero.
+
+### Modification Time (MTIME)
+
+A 32-bit Unix timestamp (seconds since January 1, 1970 00:00:00 GMT), stored in **little-endian** format.
+
+From README line 332:
+> All multi-byte integers are stored in little-endian format.
+
+### Extra Flags (XFL)
+
+Flags for the compression algorithm:
+
+- **2:** Maximum compression (slowest algorithm)
+- **4:** Fastest compression
+- **0:** Normal compression
+
+### Operating System (OS)
+
+Indicates the filesystem where compression took place:
+
+- **0:** FAT filesystem (MS-DOS, OS/2, NT/Win32)
+- **1:** Amiga
+- **2:** VMS
+- **3:** Unix
+- **4:** VM/CMS
+- **5:** Atari TOS
+- **6:** HPFS filesystem (OS/2, NT)
+- **7:** Macintosh
+- **8:** Z-System
+- **9:** CP/M
+- **10:** TOPS-20
+- **11:** NTFS filesystem (NT)
+- **12:** QDOS
+- **13:** Acorn RISCOS
+- **255:** Unknown
+
+## Optional Header Fields
+
+These fields appear after the 10-byte required header, in the following order (if present):
+
+### Extra Field (FEXTRA)
+
+If `FLG & F_EXTRA` is set:
+
+| Size | Field | Description |
+|------|-------|-------------|
+| 2 | XLEN | Length of extra field (little-endian) |
+| XLEN | Extra data | Extra field data |
+
+```c
+if (flags & F_EXTRA) {
+    unsigned short xlen = read_16_le(file);
+    char* extra = malloc(xlen);
+    fread(extra, 1, xlen, file);
+    header->extra_len = xlen;
+    header->extra = extra;
+}
+```
+
+### Original File Name (FNAME)
+
+If `FLG & F_NAME` is set:
+
+A zero-terminated string containing the original file name.
+
+```c
+if (flags & F_NAME) {
+    // Read until null terminator
+    char name_buf[256];
+    int i = 0;
+    while (i < 255) {
+        name_buf[i] = fgetc(file);
+        if (name_buf[i] == '\0') break;
+        i++;
+    }
+    header->name = strdup(name_buf);
+}
+```
+
+### Comment (FCOMMENT)
+
+If `FLG & F_COMMENT` is set:
+
+A zero-terminated string containing a comment.
+
+```c
+if (flags & F_COMMENT) {
+    // Read until null terminator
+    char comment_buf[256];
+    int i = 0;
+    while (i < 255) {
+        comment_buf[i] = fgetc(file);
+        if (comment_buf[i] == '\0') break;
+        i++;
+    }
+    header->comment = strdup(comment_buf);
+}
+```
+
+### Header CRC (FHCRC)
+
+If `FLG & F_HCRC` is set:
+
+A 16-bit CRC (little-endian) computed over all header bytes from ID1 through the end of the optional fields (but not including the HCRC itself).
+
+```c
+if (flags & F_HCRC) {
+    unsigned short hcrc = read_16_le(file);
+    header->hcrc = hcrc;
+    // Verify CRC (optional but recommended)
+}
+```
+
+## Compressed Data
+
+After the header comes the compressed data, consisting of one or more **blocks**. See [DEFLATE](/zlib/deflate) and [INFLATE](/zlib/inflate) for details on the compressed data format.
+
+## Member Footer
+
+After the compressed data, each member has an 8-byte footer:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 4 | CRC32 | CRC-32 of uncompressed data (little-endian) |
+| 4 | 4 | ISIZE | Size of uncompressed data modulo 2^32 (little-endian) |
+
+### CRC32
+
+From README line 332:
+> **CRC** (4 bytes): A cyclic redundancy check computed over the uncompressed data, represented as a little-endian unsigned 32-bit integer.
+
+Use the `get_crc()` function from `crc.h:8` to compute:
+
+```c
+unsigned int get_crc(const unsigned char *buf, size_t len);
+```
+
+### ISIZE
+
+From README line 333:
+> **ISIZE** (4 bytes): size of the data before it was compressed
+
+This is the size modulo 2^32, so for files larger than 4 GB, this value wraps around.
+
+## Data Structure
+
+From `our_zlib.h:50-63`:
+
+```c
+typedef struct {
+    unsigned char  cm;          // compression method
+    unsigned char  flags;
+    unsigned int   mtime;       // modification time
+    unsigned char  xflags;      // extra flags
+    unsigned char  os;          // operating system
+    unsigned short extra_len;   // extra field length (optional)
+    char*          extra;       // pointer to extra field or NULL (optional)
+    char*          name;        // pointer to zero-terminated file name or NULL (optional)
+    char*          comment;     // pointer to zero-terminated comment or NULL (optional)
+    unsigned short hcrc;        // header CRC, 16 bits (optional)
+    unsigned int   crc;         // 32-bit CRC for the data
+    unsigned int   full_size;   // uncompressed size
+} gz_header_t;
+```
+
+<Note>
+The `extra`, `name`, and `comment` fields are pointers that should be set to `NULL` if the corresponding flag is not set. Remember to free these when done!
+</Note>
+
+## Parsing a Member
+
+From `our_zlib.h:66-67`:
+
+```c
+int parse_member(FILE* file, gz_header_t* header);
+int skip_gz_header_to_compressed_data(FILE* file, gz_header_t* header);
+```
+
+### parse_member()
+
+From README lines 513-525:
+
+```c
+int parse_member(FILE* file, gz_header_t* header)
+```
+
+**Parameters:**
+- `file` - Pointer to a file with file pointer at the start of member data
+- `header` - Pointer to output structure where parsed data will be written
+
+**Returns:**
+- `0` on success
+- `-1` on error (NULL pointers, failure to read from file)
+
+**Algorithm:**
+
+<Steps>
+  <Step title="Read and verify magic number">
+    Read ID1 and ID2, verify they are 0x1f and 0x8b
+  </Step>
+  
+  <Step title="Read required header fields">
+    Read CM, FLG, MTIME, XFL, OS
+  </Step>
+  
+  <Step title="Read optional fields">
+    Based on FLG bits, read EXTRA, NAME, COMMENT, HCRC in order
+  </Step>
+  
+  <Step title="Skip compressed data">
+    Skip to the footer (you'll need to decompress or scan for blocks)
+  </Step>
+  
+  <Step title="Read footer">
+    Read CRC32 and ISIZE
+  </Step>
+</Steps>
+
+**Pseudocode:**
+
+```c
+int parse_member(FILE* file, gz_header_t* header) {
+    if (!file || !header) return -1;
+    
+    // Initialize header
+    memset(header, 0, sizeof(gz_header_t));
+    
+    // Read magic number
+    unsigned char id1 = fgetc(file);
+    unsigned char id2 = fgetc(file);
+    if (id1 != 0x1f || id2 != 0x8b) {
+        return -1;  // Invalid magic number
+    }
+    
+    // Read required fields
+    header->cm = fgetc(file);
+    header->flags = fgetc(file);
+    header->mtime = read_32_le(file);
+    header->xflags = fgetc(file);
+    header->os = fgetc(file);
+    
+    // Read optional fields
+    if (header->flags & F_EXTRA) {
+        header->extra_len = read_16_le(file);
+        header->extra = malloc(header->extra_len);
+        fread(header->extra, 1, header->extra_len, file);
+    }
+    
+    if (header->flags & F_NAME) {
+        header->name = read_null_terminated_string(file);
+    }
+    
+    if (header->flags & F_COMMENT) {
+        header->comment = read_null_terminated_string(file);
+    }
+    
+    if (header->flags & F_HCRC) {
+        header->hcrc = read_16_le(file);
+    }
+    
+    // Now at compressed data
+    // To get to footer, need to skip compressed data
+    // This requires parsing the compressed blocks
+    
+    // Read footer (after compressed data)
+    fseek(file, -8, SEEK_END);  // Simple approach if single member
+    header->crc = read_32_le(file);
+    header->full_size = read_32_le(file);
+    
+    return 0;
+}
+```
+
+<Warning>
+The simple approach above assumes a single member. For multi-member files, you need to actually decompress or parse the compressed blocks to find where one member ends and the next begins.
+</Warning>
+
+### skip_gz_header_to_compressed_data()
+
+```c
+int skip_gz_header_to_compressed_data(FILE* file, gz_header_t* header)
+```
+
+Similar to `parse_member()`, but stops after reading the header, leaving the file pointer positioned at the start of compressed data.
+
+This is used in decompression mode (see `main.c:152`).
+
+## Multi-Member Files
+
+A GZIP file can contain multiple members concatenated together. Each member is independent and can be decompressed separately.
+
+From `main.c:86-99`, the member summary loop shows how to handle multiple members:
+
+```c
+int member_idx = 0;
+while (parse_member(file, &info) == 0) {
+    char label[256];
+    if (info.name && info.name[0])
+        snprintf(label, sizeof(label), "%s", info.name);
+    else
+        snprintf(label, sizeof(label), "%d", member_idx);
+    
+    // Print member info
+    PRINT_MEMBER_LINE(label, info.cm, info.mtime, info.os,
+        (unsigned)info.extra_len, info.comment, info.full_size, crc_valid);
+    
+    member_idx++;
+    // Multi-member: would need to skip compressed data to next member
+    break;  // For now, only handle first member
+}
+```
+
+## Member Summary Output
+
+From README lines 197-203 and `global.h:26-32`:
+
+```c
+PRINT_MEMBER_SUMMARY_HEADER(filename);
+// Outputs: "Member Summary for <filename>:\n"
+
+PRINT_MEMBER_LINE(member_label, cm, mtime, os, extra, comment, size, crc_valid);
+// Outputs: "  Member <label>: Compression Method: <cm>, Last Modified: <mtime>, OS: <os>, Extra: <extra>, [Comment: <comment>, ]Size: <size>, CRC: <valid|invalid>\n"
+```
+
+**Example output:**
+```
+Member Summary for test.gz:
+  Member 0: Compression Method: 8, Last Modified: 1770439737, OS: 3, Extra: 0, Size: 1024, CRC: valid
+  Member image.png: Compression Method: 8, Last Modified: 1770439224, OS: 2, Extra: 0, Size: 63995, CRC: valid
+```
+
+<Note>
+If the member has a name field, use that as the label. Otherwise, use the member index (0, 1, 2, ...).
+
+The comment is only printed if present.
+</Note>
+
+## CRC Validation
+
+To validate the CRC:
+
+```c
+// Decompress the data
+unsigned char* decompressed = inflate(compressed_data, compressed_len);
+
+// Compute CRC of decompressed data
+unsigned int computed_crc = get_crc(decompressed, header.full_size);
+
+// Compare with stored CRC
+int crc_valid = (computed_crc == header.crc);
+```
+
+From README lines 206-208:
+> If a member has an invalid CRC or Header CRC (HCRC) or parsing fails, an error message is printed to standard error.
+
+## Endianness
+
+<Warning>
+All multi-byte integers in GZIP format are stored in **little-endian** format.
+</Warning>
+
+Helper functions for reading little-endian values:
+
+```c
+unsigned short read_16_le(FILE* file) {
+    unsigned char bytes[2];
+    fread(bytes, 1, 2, file);
+    return bytes[0] | (bytes[1] << 8);
+}
+
+unsigned int read_32_le(FILE* file) {
+    unsigned char bytes[4];
+    fread(bytes, 1, 4, file);
+    return bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
+}
+```
+
+## Memory Management
+
+<Warning>
+The `gz_header_t` structure contains pointers that may need to be freed:
+- `extra`
+- `name`
+- `comment`
+
+Remember to free these when done with the header!
+</Warning>
+
+```c
+void free_gz_header(gz_header_t* header) {
+    if (header->extra) free(header->extra);
+    if (header->name) free(header->name);
+    if (header->comment) free(header->comment);
+}
+```
+
+## Implementation Files
+
+GZIP member parsing is implemented in `zlib.c`.
+
+See also:
+- `main.c:82-100` - Member summary mode implementation
+- `main.c:141-187` - Decompression mode implementation
+- `main.c:102-139` - Compression mode implementation
+
+## Summary
+
+Key points about GZIP format:
+
+- Magic number: 0x1f 0x8b (always first 2 bytes)
+- Required header: 10 bytes (ID, CM, FLG, MTIME, XFL, OS)
+- Optional fields: EXTRA, NAME, COMMENT, HCRC (based on FLG bits)
+- Compressed data follows header
+- Footer: 8 bytes (CRC32, ISIZE)
+- All multi-byte integers are little-endian
+- Files can contain multiple members
+- Use provided macros for output formatting
+- Free allocated strings in header
+
+## Next Steps
+
+- [DEFLATE](/zlib/deflate) - Compressing data into GZIP format
+- [INFLATE](/zlib/inflate) - Decompressing GZIP data
+- [CLI Arguments](/zlib/cli-arguments) - Member summary mode usage

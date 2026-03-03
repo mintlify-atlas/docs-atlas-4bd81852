@@ -1,0 +1,395 @@
+---
+title: Building the Projects
+description: How to compile the PNG and ZLIB homework assignments using make
+---
+
+# Building the Projects
+
+Both homework assignments use GNU Make as the build system. This guide covers all the make targets and compilation options available.
+
+## Quick Reference
+
+<CodeGroup>
+```bash Standard Build
+# Compile everything (programs + tests)
+make all
+
+# Or simply
+make
+```
+
+```bash Debug Build
+# Compile with debugging symbols and verbose output
+make debug
+```
+
+```bash Clean Build
+# Remove all compiled files and rebuild from scratch
+make clean all
+```
+
+```bash Clean Debug Build
+# Full rebuild with debugging enabled
+make clean debug
+```
+</CodeGroup>
+
+## Understanding the Build System
+
+### Directory Structure
+
+The Makefile creates and uses these directories:
+
+```
+PNG_HW/ (or ZLIB_HW/)
+├── src/              # Your source code (.c files)
+├── include/          # Header files (.h files)
+├── tests/            # Test source files
+├── build/            # Object files (created by make)
+│   ├── main.o
+│   ├── png_reader.o
+│   └── ...           # One .o file per .c file
+└── bin/              # Executables (created by make)
+    ├── png           # Main program
+    └── png_tests     # Test suite
+```
+
+<Note>
+  The `build/` and `bin/` directories are created automatically by make and are excluded from git via `.gitignore`. Never commit compiled files to your repository.
+</Note>
+
+### What Gets Compiled
+
+Each `make` command builds two executables:
+
+<CardGroup cols={2}>
+  <Card title="Main Program" icon="code">
+    **PNG Homework**: `bin/png`  
+    **ZLIB Homework**: `bin/zlib`
+    
+    The main program executable that implements the command-line interface described in the assignment.
+  </Card>
+  
+  <Card title="Test Suite" icon="flask">
+    **PNG Homework**: `bin/png_tests`  
+    **ZLIB Homework**: `bin/zlib_tests`
+    
+    The Criterion test suite that runs unit tests on your functions.
+  </Card>
+</CardGroup>
+
+## Make Targets Explained
+
+### `make` or `make all`
+
+The default target that compiles everything:
+
+```bash
+cd PNG_HW
+make
+```
+
+**What it does**:
+1. Creates `build/` and `bin/` directories if they don't exist
+2. Compiles all `.c` files in `src/` to `.o` object files in `build/`
+3. Links object files to create `bin/png` executable
+4. Compiles test files and links them with your code to create `bin/png_tests`
+
+**Compiler flags** (standard build):
+- `-std=gnu11` - Use GNU C11 standard
+- `-Wall` - Enable all common warnings
+- `-Werror` - Treat warnings as errors
+- `-Wno-unused-function` - Allow unused static functions
+- `-MMD` - Generate dependency files for automatic recompilation
+- `-fcommon` - Allow multiple definitions of globals (compatibility)
+
+**Libraries linked**:
+- PNG homework: `-lz` (zlib compression library)
+- ZLIB homework: No external libraries (you implement compression yourself!)
+- Both: `-lcriterion` (for test suite only)
+
+### `make debug`
+
+Compiles with debugging support and verbose output:
+
+```bash
+make debug
+```
+
+**Additional compiler flags**:
+- `-g` - Include debugging symbols for GDB
+- `-DDEBUG` - Enable DEBUG macro (activates debug output)
+- `-DCOLOR` - Enable colored output
+- `-DERROR -DSUCCESS -DWARN -DINFO` - Enable message macros
+
+**When to use debug mode**:
+- When you need to use GDB to step through your code
+- When you want to see debug messages from the `debug()` macro
+- During active development to see what your code is doing
+
+<Warning>
+  Debug output can interfere with program correctness! When compiled in debug mode, your program may produce extra output that violates the specification. Always test final submissions with `make clean all` (non-debug mode).
+</Warning>
+
+### `make clean`
+
+Removes all compiled files:
+
+```bash
+make clean
+```
+
+**What it removes**:
+- Entire `build/` directory (all `.o` and `.d` files)
+- Entire `bin/` directory (all executables)
+
+**When to use**:
+- Before doing a fresh build to ensure everything recompiles
+- When switching between debug and non-debug builds
+- When you've modified header files and want to ensure all dependencies rebuild
+- Before submitting to ensure your code compiles from scratch
+
+## Common Build Workflows
+
+### Regular Development
+
+<Steps>
+  <Step title="Initial Build">
+    Start with a clean debug build to see all output:
+    
+    ```bash
+    cd PNG_HW
+    make clean debug
+    ```
+  </Step>
+
+  <Step title="Incremental Compilation">
+    After modifying source files, just run make again. It only recompiles changed files:
+    
+    ```bash
+    # Edit a file
+    vim src/png_reader.c
+    
+    # Recompile (only rebuilds what changed)
+    make debug
+    ```
+  </Step>
+
+  <Step title="Test Your Code">
+    Run tests after each build:
+    
+    ```bash
+    bin/png_tests --verbose=0
+    ```
+  </Step>
+
+  <Step title="Final Verification">
+    Before submitting, do a clean non-debug build:
+    
+    ```bash
+    make clean all
+    bin/png_tests
+    ```
+  </Step>
+</Steps>
+
+### Testing Specific Functionality
+
+```bash
+# Build in debug mode
+make clean debug
+
+# Test a specific operation
+bin/png -f tests/data/sample.png -s
+
+# Or with ZLIB
+bin/zlib -i tests/data/sample.gz -m
+```
+
+### Before Submitting to CodeGrade
+
+<Steps>
+  <Step title="Clean Build">
+    Ensure everything compiles from scratch in non-debug mode:
+    
+    ```bash
+    make clean all
+    ```
+    
+    This simulates what CodeGrade will do.
+  </Step>
+
+  <Step title="Run All Tests">
+    Verify all provided tests pass:
+    
+    ```bash
+    bin/png_tests
+    # or
+    bin/zlib_tests
+    ```
+  </Step>
+
+  <Step title="Check Output Format">
+    Manually test output format matches specification:
+    
+    ```bash
+    # Test help message
+    bin/png -h
+    
+    # Test actual operations
+    bin/png -f tests/data/sample.png -s
+    ```
+  </Step>
+
+  <Step title="Commit and Push">
+    ```bash
+    git add src/*.c
+    git commit -m "Complete implementation of png_read_chunk"
+    git push origin main
+    ```
+  </Step>
+</Steps>
+
+## Understanding Compilation Output
+
+### Successful Build
+
+```bash
+$ make
+mkdir -p bin
+mkdir -p build
+gcc -std=gnu11 -Wall -Werror -Wno-unused-function -MMD -I include -c -o build/main.o src/main.c
+gcc -std=gnu11 -Wall -Werror -Wno-unused-function -MMD -I include -c -o build/png_reader.o src/png_reader.c
+gcc -std=gnu11 -Wall -Werror -Wno-unused-function -MMD -I include build/main.o build/png_reader.o ... -o bin/png -lz
+gcc -std=gnu11 -Wall -Werror -Wno-unused-function -MMD -I include build/png_reader.o ... tests/test_reader.c -lcriterion -lz -o bin/png_tests
+```
+
+No errors = successful compilation!
+
+### Compilation Errors
+
+```bash
+src/png_reader.c:45:12: error: implicit declaration of function 'read_u32_be' [-Werror=implicit-function-declaration]
+     length = read_u32_be(buffer);
+              ^~~~~~~~~~~
+```
+
+**How to interpret**:
+- `src/png_reader.c:45:12` - File, line number, column
+- `error:` - This is a compilation error (not just a warning)
+- `implicit declaration` - Function used without being declared
+- **Fix**: Add `#include "util.h"` or declare the function
+
+### Warning Messages
+
+```bash
+src/png_reader.c:78:9: warning: unused variable 'i' [-Wunused-variable]
+     int i;
+         ^
+```
+
+<Warning>
+  Because the Makefile uses `-Werror`, warnings are treated as errors and prevent compilation. Fix all warnings!
+</Warning>
+
+## Makefile Structure (For Reference)
+
+Here's what the Makefile does:
+
+```makefile
+# Compiler and directories
+CC := gcc
+SRCD := src
+BLDD := build
+BIND := bin
+INCD := include
+TSTD := tests
+
+# Executable names
+EXEC := png        # or zlib for ZLIB homework
+TEST_EXEC := png_tests
+
+# Find all source files
+ALL_SRCF := $(shell find $(SRCD) -type f -name *.c)
+ALL_OBJF := $(patsubst $(SRCD)/%,$(BLDD)/%,$(ALL_SRCF:.c=.o))
+
+# Compiler flags
+CFLAGS := -fcommon -Wall -Werror -Wno-unused-function -MMD
+STD := -std=gnu11
+LIBS := -lz  # Only for PNG homework
+TEST_LIB := -lcriterion
+```
+
+## Automatic Dependency Tracking
+
+The Makefile uses `-MMD` to generate `.d` dependency files:
+
+```bash
+# After building, check build directory
+ls build/
+# Shows: main.o main.d png_reader.o png_reader.d ...
+```
+
+These `.d` files track which header files each `.c` file includes. If you modify a header file, make automatically recompiles all source files that depend on it.
+
+**Example**: If you modify `include/png_chunks.h`, make will automatically recompile all `.c` files that `#include "png_chunks.h"`.
+
+## Troubleshooting Build Issues
+
+### "No such file or directory" - Missing Include
+
+```bash
+src/main.c:5:10: fatal error: global.h: No such file or directory
+ #include "global.h"
+          ^~~~~~~~~~
+```
+
+**Fix**: Make sure you're in the correct directory:
+```bash
+pwd  # Should show .../PNG_HW or .../ZLIB_HW
+ls include/global.h  # Should exist
+```
+
+### "Undefined reference" - Linking Error
+
+```bash
+build/main.o: In function `main':
+main.c:(.text+0x45): undefined reference to `png_open'
+```
+
+**Cause**: Function is declared but not defined/implemented.
+
+**Fix**: Implement the missing function in the appropriate `.c` file.
+
+### "Multiple definition" - Duplicate Symbols
+
+```bash
+build/png_reader.o:(.data+0x0): multiple definition of `global_var'
+build/main.o:(.data+0x0): first defined here
+```
+
+**Cause**: Variable defined in a header file that's included by multiple `.c` files.
+
+**Fix**: Use `extern` in header, define once in a `.c` file.
+
+### Build Hangs or Is Very Slow
+
+```bash
+# Check if there are infinite loops in your code
+^C  # Press Ctrl+C to interrupt
+
+# Do a clean build
+make clean all
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Run Tests" icon="flask" href="/testing">
+    Learn how to run Criterion tests on your compiled code
+  </Card>
+  
+  <Card title="Debug Your Code" icon="bug" href="/debugging">
+    Use GDB and other tools to find and fix bugs
+  </Card>
+</CardGroup>

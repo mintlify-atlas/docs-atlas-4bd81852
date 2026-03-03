@@ -1,0 +1,337 @@
+---
+title: "LZ77 Algorithm Explanation"
+description: "Understanding the LZ77 compression algorithm and how it works"
+---
+
+## What is LZ77?
+
+Lempel-Ziv 77 (LZ77) is a lossless data compression algorithm that works by replacing repeated sequences of data with references to earlier occurrences of that data.
+
+The algorithm was published by Abraham Lempel and Jacob Ziv in 1977 and forms the foundation of many modern compression formats including GZIP, ZIP, and PNG.
+
+## How LZ77 Works
+
+### Basic Concept
+
+LZ77 uses a "sliding window" to keep track of previously seen data. When the compressor encounters a sequence that matches earlier data, it outputs a reference instead of repeating the data.
+
+Each reference contains:
+- **Distance** - How far back the matching sequence starts (1-32,768 bytes)
+- **Length** - How many bytes to copy from that position (3-258 bytes)
+
+### Example
+
+Consider compressing the text: `"the quick brown fox jumps over the lazy dog"`
+
+```
+Original: "the quick brown fox jumps over the lazy dog"
+                                        ^^^
+                                        This "the" matches earlier "the"
+```
+
+The second occurrence of "the" can be encoded as:
+- Distance: 31 (31 characters back)
+- Length: 3 (3 characters long)
+
+Instead of storing `t`, `h`, `e` again, we store `<31, 3>` which takes fewer bits.
+
+## LZ77 Tokens
+
+The LZ77 algorithm outputs a stream of tokens. Each token is either:
+
+### Literal Token
+
+A single byte that had no match or where a match wasn't worthwhile.
+
+```c
+lz_token_t literal = {
+    .is_literal = 1,
+    .literal = 'A',      // The actual byte value
+    .length = 0,         // Not used for literals
+    .distance = 0        // Not used for literals
+};
+```
+
+### Match Token
+
+A reference to previously seen data.
+
+```c
+lz_token_t match = {
+    .is_literal = 0,
+    .literal = 0,        // Not used for matches
+    .length = 10,        // Copy 10 bytes
+    .distance = 150      // Starting 150 bytes back
+};
+```
+
+## The LZ77 Token Structure
+
+From `lz.h:8-13`:
+
+```c
+typedef struct {
+    int is_literal;          // 1 if literal, 0 if match
+    unsigned char literal;   // Literal value (if is_literal=1)
+    unsigned int length;     // Length of match (if is_literal=0)
+    unsigned int distance;   // Distance to match (if is_literal=0)
+} lz_token_t;
+```
+
+## Compression Constraints
+
+### Sliding Window
+
+The maximum distance for a match is **32,768 bytes** (32 KB). This is the size of the "sliding window" that the algorithm can look back through.
+
+<Note>
+Why 32,768? This value balances compression ratio with memory usage. It's small enough to fit in memory but large enough to find most repeated sequences.
+</Note>
+
+### Minimum Match Length
+
+Matches must be at least **3 bytes** long to be worthwhile.
+
+**Reasoning:** A match token needs to store both distance and length. If we only save 1-2 bytes, the overhead of encoding the distance/length pair would make the "compressed" data larger!
+
+For matches shorter than 3 bytes, output them as literals instead.
+
+### Maximum Match Length
+
+Matches can be at most **258 bytes** long.
+
+**Reasoning:** This is defined by the DEFLATE specification to allow efficient encoding of the length value. Longer matches must be split into multiple match tokens.
+
+## The Compression Process
+
+<Steps>
+  <Step title="Start at the beginning">
+    Position the algorithm at the first byte of input data
+  </Step>
+  
+  <Step title="Search for matches">
+    Look back through the previous 32,768 bytes for the longest matching sequence
+  </Step>
+  
+  <Step title="Decide: match or literal?">
+    - If match length ≥ 3: output a match token
+    - If match length < 3: output a literal token
+  </Step>
+  
+  <Step title="Advance position">
+    - For matches: advance by the match length
+    - For literals: advance by 1 byte
+  </Step>
+  
+  <Step title="Repeat until done">
+    Continue until all input data is processed
+  </Step>
+</Steps>
+
+## Example Compression
+
+Let's compress the string `"ABCABCABC"`:
+
+```
+Position 0-2: "ABC"
+  No previous data to match
+  Output: Literal('A'), Literal('B'), Literal('C')
+
+Position 3-5: "ABC"
+  Matches "ABC" at position 0 (distance = 3, length = 3)
+  Output: Match(distance=3, length=3)
+
+Position 6-8: "ABC"
+  Matches "ABC" at position 0 (distance = 6, length = 3)
+  OR matches "ABC" at position 3 (distance = 3, length = 3)
+  Choose longest or closest match
+  Output: Match(distance=3, length=3)
+```
+
+Compressed output: `Lit('A') Lit('B') Lit('C') Match(3,3) Match(3,3)`
+
+## Finding the Best Match
+
+The compressor should find the **longest** matching substring within the sliding window.
+
+### Naive Approach
+
+For each position, compare against every position in the previous 32,768 bytes:
+
+```c
+for (int lookback = 1; lookback <= min(pos, 32768); lookback++) {
+    int match_len = 0;
+    while (data[pos + match_len] == data[pos - lookback + match_len]) {
+        match_len++;
+        if (match_len >= 258) break; // Max length
+    }
+    if (match_len > best_length) {
+        best_length = match_len;
+        best_distance = lookback;
+    }
+}
+```
+
+<Warning>
+This naive approach is O(n²) and very slow. Practical implementations use hash tables or suffix arrays to speed up match finding.
+</Warning>
+
+### Greedy vs. Optimal
+
+The compressor must decide: take the first good match found, or search for an even better match?
+
+**Greedy approach:** Take the longest match immediately
+**Optimal approach:** Look ahead to see if waiting might yield better overall compression
+
+For this assignment, a greedy approach is acceptable.
+
+## Decompression Process
+
+Decompression is much simpler than compression:
+
+<Steps>
+  <Step title="Read a token">
+    Determine if it's a literal or match token
+  </Step>
+  
+  <Step title="Process literal tokens">
+    Append the literal byte to the output buffer
+  </Step>
+  
+  <Step title="Process match tokens">
+    Copy `length` bytes from `distance` bytes back in the output buffer
+  </Step>
+  
+  <Step title="Repeat until done">
+    Continue until all tokens are processed
+  </Step>
+</Steps>
+
+### Decompression Example
+
+Given tokens: `Lit('A') Lit('B') Lit('C') Match(3,3) Match(3,3)`
+
+```
+Output buffer: []
+Read Lit('A')  → Output: [A]
+Read Lit('B')  → Output: [A,B]
+Read Lit('C')  → Output: [A,B,C]
+Read Match(3,3) → Copy 3 bytes from position (3-3=0)
+                → Copy bytes [A,B,C]
+                → Output: [A,B,C,A,B,C]
+Read Match(3,3) → Copy 3 bytes from position (6-3=3)
+                → Copy bytes [A,B,C]
+                → Output: [A,B,C,A,B,C,A,B,C]
+```
+
+## The Wrap-Around Case
+
+A special case occurs when `distance < length`. This means we're copying data that we're currently writing!
+
+### Example: Run-Length Encoding
+
+Consider the token `Match(distance=1, length=5)` applied to output buffer `[A]`:
+
+```
+Output: [A]
+Copy from position (1-1=0), which is 'A'
+  Output: [A, A]     (copied 1st byte)
+  Output: [A, A, A]   (copied 2nd byte - wraps!)
+  Output: [A, A, A, A] (copied 3rd byte)
+  Output: [A, A, A, A, A] (copied 4th byte)
+```
+
+This effectively performs run-length encoding: repeating a single byte (or short pattern) multiple times.
+
+<Note>
+When distance < length, copy bytes one at a time, because each copied byte becomes available for subsequent copies.
+</Note>
+
+## Invalid Distance Codes
+
+<Warning>
+Distance codes **30** and **31** can technically be represented in the DEFLATE format but are reserved and invalid.
+
+Your decompressor must return an error if it encounters these values.
+</Warning>
+
+From the README (line 257):
+> Although distance values of 30 and 31 can technically be expressed, your `lz_decompress` function should stop and return an error if it encounters them.
+
+## Why LZ77?
+
+### Advantages
+
+- **Simple to decompress** - Only needs a buffer and basic copy operations
+- **No dictionary needed** - The dictionary is the recently decompressed data itself
+- **Adaptive** - Automatically adapts to the data being compressed
+- **Lossless** - Perfect reconstruction of original data
+
+### Limitations
+
+- **Limited look-back** - Can only reference the previous 32 KB
+- **No long-range matches** - Can't reference data from earlier in large files
+- **Compression speed** - Finding optimal matches can be slow
+
+### Combination with Huffman
+
+LZ77 alone provides good compression, but it can be improved further:
+
+1. **LZ77** reduces redundancy by eliminating repeated sequences
+2. **Huffman coding** then compresses the LZ77 output by using fewer bits for common symbols
+
+This combination is the DEFLATE algorithm used in GZIP.
+
+## Position in DEFLATE Pipeline
+
+<Tabs>
+  <Tab title="Compression (DEFLATE)">
+    ```
+    Input Data
+        ↓
+    [1] LZ77 Compression
+        ↓
+    LZ77 Tokens (literals + matches)
+        ↓
+    [2] Convert to Length/Distance Codes
+        ↓
+    [3] Huffman Encoding
+        ↓
+    Compressed Output
+    ```
+  </Tab>
+  
+  <Tab title="Decompression (INFLATE)">
+    ```
+    Compressed Input
+        ↓
+    [1] Huffman Decoding
+        ↓
+    Length/Distance Codes
+        ↓
+    [2] LZ77 Decompression
+        ↓
+    Original Data
+    ```
+  </Tab>
+</Tabs>
+
+From the README (line 229):
+> The Lempel-Ziv scheme is the lowest-level compression scheme in the algorithm, so it is run first when compressing and last when decompressing.
+
+## Summary
+
+LZ77 compression:
+- Replaces repeated sequences with (distance, length) references
+- Uses a 32 KB sliding window
+- Requires minimum 3-byte matches
+- Allows maximum 258-byte matches
+- Outputs a stream of literal and match tokens
+- Handles wrap-around (distance < length) for run-length encoding
+- Rejects invalid distance codes 30 and 31
+
+## Next Steps
+
+Now that you understand the LZ77 algorithm, proceed to:
+- [LZ77 Implementation](/zlib/lz77-implementation) - How to implement compression and decompression
+- [Huffman Algorithm](/zlib/huffman-algorithm) - The next layer of compression
